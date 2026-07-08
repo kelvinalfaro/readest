@@ -1,0 +1,81 @@
+name: CWA Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/cwa-kosync-fallback
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - name: setup node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: setup Java
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: install NDK
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: cwa-android-cargo
+
+      - name: create .env.local file for Next.js
+        run: |
+          {
+            echo "NEXT_PUBLIC_POSTHOG_KEY="
+            echo "NEXT_PUBLIC_POSTHOG_HOST="
+            echo "NEXT_PUBLIC_SUPABASE_URL="
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY="
+            echo "NEXT_PUBLIC_APP_PLATFORM=tauri"
+            echo "SENTRY_DSN="
+          } > .env.local
+          cp .env.local apps/readest-app/.env.local
+
+      - name: build Android debug apk
+        working-directory: apps/readest-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: pnpm tauri android build --debug -t aarch64
+
+      - name: upload apk artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: readest-cwa-android-apks
+          path: apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 7

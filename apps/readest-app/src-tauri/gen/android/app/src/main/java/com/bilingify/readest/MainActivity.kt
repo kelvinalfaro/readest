@@ -1,4 +1,4 @@
-package com.bilingify.readest
+package com.bilingify.readest.cwa
 
 import android.os.Build
 import android.os.Bundle

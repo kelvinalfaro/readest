@@ -18,15 +18,26 @@ export interface KoSyncProgress {
   device_id?: string;
 }
 
+type ConnectResult = { success: boolean; message?: string };
+
 export class KOSyncClient {
   private config: KOSyncSettings;
-  private isLanServer: boolean;
+  private isLanServer: boolean = false;
   private usesHttpAuth: boolean = false;
 
   constructor(config: KOSyncSettings) {
     this.config = config;
-    this.config.serverUrl = config.serverUrl.replace(/\/$/, '');
+    this.setServerUrl(config.serverUrl);
+  }
+
+  private setServerUrl(serverUrl: string) {
+    this.config.serverUrl = serverUrl.replace(/\/$/, '');
     this.isLanServer = isLanAddress(this.config.serverUrl);
+  }
+
+  private getKosyncPathFallbackUrl(): string | null {
+    if (/\/kosync$/i.test(this.config.serverUrl)) return null;
+    return `${this.config.serverUrl}/kosync`;
   }
 
   private async request(
@@ -116,12 +127,32 @@ export class KOSyncClient {
    * @param password - The password for authentication
    * @returns Promise with success status and optional message
    */
-  async connect(
-    username: string,
-    password: string,
-  ): Promise<{ success: boolean; message?: string }> {
+  async connect(username: string, password: string): Promise<ConnectResult> {
     const userkey = md5(password);
+    const originalServerUrl = this.config.serverUrl;
 
+    const result = await this.connectToConfiguredServer(username, userkey);
+    if (result.success) return result;
+
+    const fallbackUrl = this.getKosyncPathFallbackUrl();
+    if (!fallbackUrl || result.message !== 'Not a KOReader Sync server. Check the Server URL.') {
+      return result;
+    }
+
+    this.setServerUrl(fallbackUrl);
+    const fallbackResult = await this.connectToConfiguredServer(username, userkey);
+    if (fallbackResult.success) return fallbackResult;
+
+    this.setServerUrl(originalServerUrl);
+    return result;
+  }
+
+  private async connectToConfiguredServer(
+    username: string,
+    userkey: string,
+  ): Promise<ConnectResult> {
+    this.config.userkey = userkey;
+    this.usesHttpAuth = false;
     try {
       const authResponse = await this.request('/users/auth', {
         method: 'GET',

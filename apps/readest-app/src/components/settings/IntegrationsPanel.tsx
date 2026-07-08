@@ -46,6 +46,8 @@ import type { FileSyncBackendKind } from '@/services/sync/file/providerRegistry'
 import SubPageHeader from './SubPageHeader';
 import { BoxedList, NavigationRow, SectionTitle, SettingLabel, Tips } from './primitives';
 
+const SHOW_PREMIUM_SURFACES = false;
+
 type SubPage =
   | 'kosync'
   | 'webdav'
@@ -129,6 +131,10 @@ const IntegrationsPanel: React.FC = () => {
       requestedSubPage === 'gdrive' ||
       requestedSubPage === 's3' ||
       requestedSubPage === 'cloudsync';
+    if (!SHOW_PREMIUM_SURFACES && isCloudRequest) {
+      setRequestedSubPage(null);
+      return;
+    }
     // Cloud-sync sub-pages are premium-gated. If the plan is still loading, wait
     // (don't consume the request); once known, only honor it for paid plans.
     if (isCloudRequest && !isCloudSyncPremium) {
@@ -164,7 +170,7 @@ const IntegrationsPanel: React.FC = () => {
         <KOSyncForm onBack={() => setSubPage(null)} />
       </div>
     );
-  if (subPage === 'webdav')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'webdav')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -195,7 +201,7 @@ const IntegrationsPanel: React.FC = () => {
         )}
       </div>
     );
-  if (subPage === 'gdrive')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'gdrive')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -226,7 +232,7 @@ const IntegrationsPanel: React.FC = () => {
         )}
       </div>
     );
-  if (subPage === 's3')
+  if (SHOW_PREMIUM_SURFACES && subPage === 's3')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -271,7 +277,7 @@ const IntegrationsPanel: React.FC = () => {
         </div>
       </div>
     );
-  if (subPage === 'readest-cloud')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'readest-cloud')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -313,7 +319,7 @@ const IntegrationsPanel: React.FC = () => {
         <CatalogManager inSubPage />
       </div>
     );
-  if (subPage === 'send')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'send')
     return (
       <div className='my-4 w-full'>
         <SendToReadestForm onBack={() => setSubPage(null)} />
@@ -417,71 +423,75 @@ const IntegrationsPanel: React.FC = () => {
         </div>
       </div>
 
-      <div className='w-full' data-setting-id='settings.integrations.cloudSync'>
-        <SectionTitle className='mb-2'>{_('Cloud Sync')}</SectionTitle>
-        <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
-          <div
-            className='divide-base-200 divide-y'
-            role='radiogroup'
-            aria-label={_('Cloud sync provider')}
-          >
-            <CloudProviderRow
-              icon={RiCloudFill}
-              title={_('Readest Cloud')}
-              status={readestStatus}
-              isActive={!!user && cloudProvider === 'readest'}
-              canActivate={!!user}
-              onActivate={() => activateCloudProvider('readest')}
-              onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
-              activateLabel={_('Use Readest Cloud')}
-            />
-            {/* Third-party providers are premium: every row carries the tier
-                badge; on a free plan the radio is disabled and opening a row
-                routes to the upgrade page instead of the config sub-page. */}
-            {(appService?.isDesktopApp ||
-              appService?.isAndroidApp ||
-              appService?.isIOSApp ||
-              // Web: only when a Web-type GIS client id is configured for this build.
-              (isWebAppPlatform() && !!getGoogleWebClientId())) && (
+      {SHOW_PREMIUM_SURFACES && (
+        <div className='w-full' data-setting-id='settings.integrations.cloudSync'>
+          <SectionTitle className='mb-2'>{_('Cloud Sync')}</SectionTitle>
+          <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
+            <div
+              className='divide-base-200 divide-y'
+              role='radiogroup'
+              aria-label={_('Cloud sync provider')}
+            >
               <CloudProviderRow
-                icon={RiGoogleLine}
-                title={_('Google Drive')}
-                status={gdriveStatus}
-                badge={_('Premium')}
-                isActive={activeCloudKind === 'gdrive'}
-                canActivate={isCloudSyncPremium && gdriveConfigured}
-                onActivate={() => activateCloudProvider('gdrive')}
-                onOpen={() =>
-                  isCloudSyncPremium ? setSubPage('gdrive') : navigateToProfile(router)
-                }
-                activateLabel={_('Use Google Drive')}
+                icon={RiCloudFill}
+                title={_('Readest Cloud')}
+                status={readestStatus}
+                isActive={!!user && cloudProvider === 'readest'}
+                canActivate={!!user}
+                onActivate={() => activateCloudProvider('readest')}
+                onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
+                activateLabel={_('Use Readest Cloud')}
               />
-            )}
-            <CloudProviderRow
-              icon={RiCloudLine}
-              title={_('WebDAV')}
-              status={webdavStatus}
-              badge={_('Premium')}
-              isActive={activeCloudKind === 'webdav'}
-              canActivate={isCloudSyncPremium && webdavConfigured}
-              onActivate={() => activateCloudProvider('webdav')}
-              onOpen={() => (isCloudSyncPremium ? setSubPage('webdav') : navigateToProfile(router))}
-              activateLabel={_('Use WebDAV')}
-            />
-            <CloudProviderRow
-              icon={RiDatabase2Line}
-              title={_('S3 Storage')}
-              status={s3Status}
-              badge={_('Premium')}
-              isActive={activeCloudKind === 's3'}
-              canActivate={isCloudSyncPremium && s3Configured}
-              onActivate={() => activateCloudProvider('s3')}
-              onOpen={() => (isCloudSyncPremium ? setSubPage('s3') : navigateToProfile(router))}
-              activateLabel={_('Use S3')}
-            />
+              {/* Third-party providers are premium: every row carries the tier
+                  badge; on a free plan the radio is disabled and opening a row
+                  routes to the upgrade page instead of the config sub-page. */}
+              {(appService?.isDesktopApp ||
+                appService?.isAndroidApp ||
+                appService?.isIOSApp ||
+                // Web: only when a Web-type GIS client id is configured for this build.
+                (isWebAppPlatform() && !!getGoogleWebClientId())) && (
+                <CloudProviderRow
+                  icon={RiGoogleLine}
+                  title={_('Google Drive')}
+                  status={gdriveStatus}
+                  badge={_('Premium')}
+                  isActive={activeCloudKind === 'gdrive'}
+                  canActivate={isCloudSyncPremium && gdriveConfigured}
+                  onActivate={() => activateCloudProvider('gdrive')}
+                  onOpen={() =>
+                    isCloudSyncPremium ? setSubPage('gdrive') : navigateToProfile(router)
+                  }
+                  activateLabel={_('Use Google Drive')}
+                />
+              )}
+              <CloudProviderRow
+                icon={RiCloudLine}
+                title={_('WebDAV')}
+                status={webdavStatus}
+                badge={_('Premium')}
+                isActive={activeCloudKind === 'webdav'}
+                canActivate={isCloudSyncPremium && webdavConfigured}
+                onActivate={() => activateCloudProvider('webdav')}
+                onOpen={() =>
+                  isCloudSyncPremium ? setSubPage('webdav') : navigateToProfile(router)
+                }
+                activateLabel={_('Use WebDAV')}
+              />
+              <CloudProviderRow
+                icon={RiDatabase2Line}
+                title={_('S3 Storage')}
+                status={s3Status}
+                badge={_('Premium')}
+                isActive={activeCloudKind === 's3'}
+                canActivate={isCloudSyncPremium && s3Configured}
+                onActivate={() => activateCloudProvider('s3')}
+                onOpen={() => (isCloudSyncPremium ? setSubPage('s3') : navigateToProfile(router))}
+                activateLabel={_('Use S3')}
+              />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className='w-full' data-setting-id='settings.integrations.catalogs'>
         <SectionTitle className='mb-2'>{_('Content Sources')}</SectionTitle>
@@ -493,12 +503,14 @@ const IntegrationsPanel: React.FC = () => {
               status={opdsStatus}
               onClick={() => setSubPage('opds')}
             />
-            <IntegrationRow
-              icon={RiSendPlaneLine}
-              title={_('Send to Readest')}
-              status={_('Email books to your library')}
-              onClick={() => setSubPage('send')}
-            />
+            {SHOW_PREMIUM_SURFACES && (
+              <IntegrationRow
+                icon={RiSendPlaneLine}
+                title={_('Send to Readest')}
+                status={_('Email books to your library')}
+                onClick={() => setSubPage('send')}
+              />
+            )}
           </div>
         </div>
       </div>

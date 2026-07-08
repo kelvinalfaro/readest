@@ -51,6 +51,8 @@ type CheckoutState = {
   planName: string;
 };
 
+const SHOW_PREMIUM_SURFACES = false;
+
 const ProfilePage = () => {
   const _ = useTranslation();
   const router = useRouter();
@@ -311,9 +313,10 @@ const ProfilePage = () => {
                     planDetails={userPlanDetails}
                   />
 
-                  {!showStorageManager && !showSharedLinksManager && !showSyncManager && (
-                    <UsageStats quotas={quotas} />
-                  )}
+                  {SHOW_PREMIUM_SURFACES &&
+                    !showStorageManager &&
+                    !showSharedLinksManager &&
+                    !showSyncManager && <UsageStats quotas={quotas} />}
                 </div>
 
                 {showStorageManager ? (
@@ -331,17 +334,19 @@ const ProfilePage = () => {
                   </div>
                 ) : (
                   <>
-                    <div className='flex flex-col gap-y-8 sm:px-6'>
-                      <PlansComparison
-                        availablePlans={availablePlans}
-                        userPlan={userProfilePlan}
-                        onSubscribe={
-                          appService.hasIAP && iapAvailable
-                            ? handleIAPSubscribe
-                            : handleStripeSubscribe
-                        }
-                      />
-                    </div>
+                    {SHOW_PREMIUM_SURFACES && (
+                      <div className='flex flex-col gap-y-8 sm:px-6'>
+                        <PlansComparison
+                          availablePlans={availablePlans}
+                          userPlan={userProfilePlan}
+                          onSubscribe={
+                            appService.hasIAP && iapAvailable
+                              ? handleIAPSubscribe
+                              : handleStripeSubscribe
+                          }
+                        />
+                      </div>
+                    )}
                     <div className='flex flex-col gap-y-8 px-6'>
                       <AccountActions
                         userPlan={userProfilePlan}
@@ -350,9 +355,13 @@ const ProfilePage = () => {
                         onResetPassword={handleResetPassword}
                         onUpdateEmail={handleUpdateEmail}
                         onConfirmDelete={handleDeleteWithMessage}
-                        onRestorePurchase={handleIAPRestorePurchase}
-                        onManageSubscription={handleManageSubscription}
-                        onManageStorage={handleManageStorage}
+                        onRestorePurchase={
+                          SHOW_PREMIUM_SURFACES ? handleIAPRestorePurchase : undefined
+                        }
+                        onManageSubscription={
+                          SHOW_PREMIUM_SURFACES ? handleManageSubscription : undefined
+                        }
+                        onManageStorage={SHOW_PREMIUM_SURFACES ? handleManageStorage : undefined}
                         onManageSharedLinks={handleManageSharedLinks}
                         onManageSync={handleManageSync}
                       />
