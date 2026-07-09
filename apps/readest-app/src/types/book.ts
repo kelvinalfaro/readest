@@ -122,6 +122,13 @@ export interface Book {
   readingStatus?: ReadingStatus;
   readingStatusUpdatedAt?: number; // ms; bumped only when readingStatus changes
   primaryLanguage?: string;
+  cwaSource?: {
+    subscriptionId: string;
+    subscriptionName: string;
+    catalogId: string;
+    sourceUrl: string;
+    downloadedAt: number;
+  };
 
   metadata?: BookMetadata;
 }

@@ -83,6 +83,29 @@ export interface KOSyncSettings {
   strategy: KOSyncStrategy;
 }
 
+export type CWAFormatPreference = 'epub' | 'kepub' | 'pdf';
+export type CWACleanupPolicy = 'never' | 'finished';
+
+export interface CWASubscription {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  limit: number;
+  formatPreference: CWAFormatPreference[];
+  cleanupPolicy: CWACleanupPolicy;
+  allowCleanupWithNotes?: boolean;
+}
+
+export interface CWASettings {
+  enabled: boolean;
+  serverUrl: string;
+  username: string;
+  password: string;
+  subscriptions: CWASubscription[];
+  lastSyncedAt?: number;
+}
+
 export interface ReadwiseSettings {
   enabled: boolean;
   accessToken: string;
@@ -364,6 +387,7 @@ export interface SystemSettings {
   biometricUnlockEnabled?: boolean;
 
   kosync: KOSyncSettings;
+  cwa: CWASettings;
   readwise: ReadwiseSettings;
   hardcover: HardcoverSettings;
   webdav: WebDAVSettings;

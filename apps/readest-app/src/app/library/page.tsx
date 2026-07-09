@@ -44,6 +44,7 @@ import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useCustomOPDSStore } from '@/store/customOPDSStore';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { useTheme } from '@/hooks/useTheme';
@@ -118,6 +119,7 @@ import { useReplicaPull } from '@/hooks/useReplicaPull';
 import { useCustomFonts } from '@/hooks/useCustomFonts';
 import DropIndicator from '@/components/DropIndicator';
 import SettingsDialog from '@/components/settings/SettingsDialog';
+import { buildCWACatalog, getCWASettings } from '@/services/cwa';
 import ModalPortal from '@/components/ModalPortal';
 import TransferQueuePanel from './components/TransferQueuePanel';
 
@@ -563,6 +565,15 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
 
   const handleShowOPDSDialog = () => {
     setShowCatalogManager(true);
+  };
+
+  const handleOpenCWALibrary = async () => {
+    const cwa = getCWASettings(useSettingsStore.getState().settings);
+    const catalog = buildCWACatalog(cwa);
+    await useCustomOPDSStore.getState().loadCustomOPDSCatalogs(envConfig);
+    const saved = useCustomOPDSStore.getState().addCatalog(catalog);
+    await useCustomOPDSStore.getState().saveCustomOPDSCatalogs(envConfig);
+    router.push(`/opds?id=${encodeURIComponent(saved.id)}&url=${encodeURIComponent(saved.url)}`);
   };
 
   const handleDismissOPDSDialog = () => {
@@ -1618,6 +1629,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
             appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
           }
           onImportBookFromUrl={isTauriAppPlatform() ? () => setShowImportFromUrl(true) : undefined}
+          onOpenCWALibrary={handleOpenCWALibrary}
           onOpenCatalogManager={handleShowOPDSDialog}
           onToggleSelectMode={() => handleSetSelectMode(!isSelectMode)}
           onSelectAll={handleSelectAll}

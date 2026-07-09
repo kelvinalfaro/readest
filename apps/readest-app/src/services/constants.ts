@@ -20,6 +20,7 @@ import {
 import {
   HardcoverSettings,
   KOSyncSettings,
+  CWASettings,
   LibraryGroupByType,
   LibrarySortByType,
   ReadSettings,
@@ -74,6 +75,33 @@ export const DEFAULT_KOSYNC_SETTINGS = {
   strategy: 'prompt',
   enabled: false,
 } as KOSyncSettings;
+
+export const DEFAULT_CWA_SETTINGS = {
+  enabled: true,
+  serverUrl: 'https://books.alfaro.io/books',
+  username: '',
+  password: '',
+  subscriptions: [
+    {
+      id: 'cwa-new',
+      name: 'New Books',
+      url: 'https://books.alfaro.io/books/opds/new',
+      enabled: false,
+      limit: 25,
+      formatPreference: ['epub', 'kepub', 'pdf'],
+      cleanupPolicy: 'never',
+    },
+    {
+      id: 'cwa-unread',
+      name: 'Unread Books',
+      url: 'https://books.alfaro.io/books/opds/unreadbooks',
+      enabled: false,
+      limit: 25,
+      formatPreference: ['epub', 'kepub', 'pdf'],
+      cleanupPolicy: 'never',
+    },
+  ],
+} as CWASettings;
 
 export const READWISE_API_BASE_URL = 'https://readwise.io/api/v2';
 
@@ -183,6 +211,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   },
 
   kosync: DEFAULT_KOSYNC_SETTINGS,
+  cwa: DEFAULT_CWA_SETTINGS,
   readwise: DEFAULT_READWISE_SETTINGS,
   hardcover: DEFAULT_HARDCOVER_SETTINGS,
   webdav: DEFAULT_WEBDAV_SETTINGS,

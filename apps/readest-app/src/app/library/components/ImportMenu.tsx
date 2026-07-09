@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import { MdLink, MdRssFeed } from 'react-icons/md';
+import { RiServerLine } from 'react-icons/ri';
 import { IoFileTray } from 'react-icons/io5';
 import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -11,6 +12,7 @@ interface ImportMenuProps {
   onImportBooksFromFiles: () => void;
   onImportBooksFromDirectory?: () => void;
   onImportBookFromUrl?: () => void;
+  onOpenCWALibrary?: () => void;
   onOpenCatalogManager: () => void;
 }
 
@@ -19,6 +21,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
   onImportBooksFromFiles,
   onImportBooksFromDirectory,
   onImportBookFromUrl,
+  onOpenCWALibrary,
   onOpenCatalogManager,
 }) => {
   const _ = useTranslation();
@@ -41,6 +44,11 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
 
   const handleOpenCatalogManager = () => {
     onOpenCatalogManager();
+    setIsDropdownOpen?.(false);
+  };
+
+  const handleOpenCWALibrary = () => {
+    onOpenCWALibrary?.();
     setIsDropdownOpen?.(false);
   };
 
@@ -68,6 +76,11 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
           onClick={handleImportFromUrl}
         />
       )}
+      <MenuItem
+        label={_('CWA Library')}
+        Icon={<RiServerLine className='h-5 w-5' />}
+        onClick={handleOpenCWALibrary}
+      />
       <MenuItem
         label={appService?.isOnlineCatalogsAccessible ? _('Online Library') : _('OPDS Catalogs')}
         Icon={<MdRssFeed className='h-5 w-5' />}

@@ -13,6 +13,7 @@ import {
   RiCloudFill,
   RiDatabase2Line,
   RiGoogleLine,
+  RiServerLine,
 } from 'react-icons/ri';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
@@ -29,6 +30,7 @@ import { isWebAppPlatform } from '@/services/environment';
 import { getGoogleWebClientId } from '@/services/sync/providers/gdrive/buildGoogleDriveProvider';
 import { navigateToLogin, navigateToProfile } from '@/utils/nav';
 import KOSyncForm from './integrations/KOSyncForm';
+import CWAForm from './integrations/CWAForm';
 import ReadwiseForm from './integrations/ReadwiseForm';
 import HardcoverForm from './integrations/HardcoverForm';
 import SendToReadestForm from './integrations/SendToReadestForm';
@@ -50,6 +52,7 @@ const SHOW_PREMIUM_SURFACES = false;
 
 type SubPage =
   | 'kosync'
+  | 'cwa'
   | 'webdav'
   | 'gdrive'
   | 's3'
@@ -62,7 +65,7 @@ type SubPage =
 
 /**
  * Integrations panel — single point of discovery for external service config:
- * KOReader Sync, Readwise, Hardcover, and OPDS Catalogs.
+ * KOReader Sync, CWA, Readwise, Hardcover, and OPDS Catalogs.
  *
  * Pattern: boxed list of NavigationRows. Each row pushes the panel into an
  * inline sub-page (with breadcrumb back-navigation matching the Dictionaries
@@ -98,7 +101,7 @@ const IntegrationsPanel: React.FC = () => {
 
   const [subPage, setSubPage] = useState<SubPage>(null);
 
-  // Android Back / Esc: when any integrations sub-page (KOSync, WebDAV,
+  // Android Back / Esc: when any integrations sub-page (KOSync, CWA, WebDAV,
   // Readwise, Hardcover, OPDS, Send-to-Readest) is open, intercept and
   // step back to the integrations list instead of letting <Dialog>'s
   // listener close the whole Settings dialog. The hook registers its
@@ -144,6 +147,7 @@ const IntegrationsPanel: React.FC = () => {
     }
     if (
       requestedSubPage === 'kosync' ||
+      requestedSubPage === 'cwa' ||
       requestedSubPage === 'webdav' ||
       requestedSubPage === 'gdrive' ||
       requestedSubPage === 's3' ||
@@ -168,6 +172,12 @@ const IntegrationsPanel: React.FC = () => {
     return (
       <div className='my-4 w-full'>
         <KOSyncForm onBack={() => setSubPage(null)} />
+      </div>
+    );
+  if (subPage === 'cwa')
+    return (
+      <div className='my-4 w-full'>
+        <CWAForm onBack={() => setSubPage(null)} />
       </div>
     );
   if (SHOW_PREMIUM_SURFACES && subPage === 'webdav')
@@ -331,6 +341,11 @@ const IntegrationsPanel: React.FC = () => {
       ? _('Connected as {{user}}', { user: settings.kosync.username })
       : _('Connected')
     : _('Not connected');
+  const cwaStatus = settings.cwa?.enabled
+    ? settings.cwa.username
+      ? _('Connected as {{user}}', { user: settings.cwa.username })
+      : _('Configured')
+    : _('Not configured');
 
   const readwiseStatus = settings.readwise?.enabled ? _('Connected') : _('Not connected');
   const hardcoverStatus = settings.hardcover?.enabled ? _('Connected') : _('Not connected');
@@ -406,6 +421,12 @@ const IntegrationsPanel: React.FC = () => {
               title={_('KOReader')}
               status={koSyncStatus}
               onClick={() => setSubPage('kosync')}
+            />
+            <IntegrationRow
+              icon={RiServerLine}
+              title={_('CWA Library')}
+              status={cwaStatus}
+              onClick={() => setSubPage('cwa')}
             />
             <IntegrationRow
               icon={RiBookReadLine}

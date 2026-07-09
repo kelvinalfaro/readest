@@ -49,6 +49,17 @@ export interface SyncResult {
   errors: Array<{ catalogId: string; catalogName: string; error: string }>;
 }
 
+export interface OPDSSyncOptions {
+  limitByCatalogId?: Record<string, number>;
+  onBookImported?: (input: {
+    book: Book;
+    catalogId: string;
+    catalogName: string;
+    sourceUrl: string;
+    item: PendingItem;
+  }) => void | Promise<void>;
+}
+
 // --- Helpers ---
 
 export function isRetryEligible(entry: FailedEntry): boolean {
