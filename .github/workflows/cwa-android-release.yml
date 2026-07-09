@@ -1,13 +1,8 @@
-name: CWA Android Build
+name: CWA Android APK Release
 
 on:
   workflow_dispatch:
     inputs:
-      create_release:
-        description: 'Create a GitHub release and upload the APK.'
-        required: false
-        default: true
-        type: boolean
       tag_name:
         description: 'Release tag. Leave blank to use cwa-android-v<version>-<run-number>.'
         required: false
@@ -16,17 +11,20 @@ on:
         description: 'Release title. Leave blank to use Readest CWA Android v<version>.'
         required: false
         type: string
-  push:
-    branches:
-      - agent/cwa-kosync-fallback
+      prerelease:
+        description: 'Mark the GitHub release as a prerelease.'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
-  android:
+  android-release:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -41,16 +39,16 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: setup Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: '9.5.1'
+
       - name: setup Java
         uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5
         with:
           distribution: zulu
           java-version: '17'
-
-      - name: setup Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
-        with:
-          gradle-version: '9.5.1'
 
       - name: setup Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
@@ -71,7 +69,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: cwa-android-cargo
+          key: cwa-android-release-cargo
 
       - name: create .env.local file for Next.js
         run: |
@@ -85,14 +83,7 @@ jobs:
           } > .env.local
           cp .env.local apps/readest-app/.env.local
 
-      - name: build Android debug apk
-        working-directory: apps/readest-app
-        env:
-          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: pnpm tauri android build --debug -t aarch64
-
       - name: derive release metadata
-        if: github.event_name == 'workflow_dispatch' && inputs.create_release
         id: meta
         shell: bash
         run: |
@@ -109,19 +100,29 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
 
-      - name: create GitHub release and upload APK
-        if: github.event_name == 'workflow_dispatch' && inputs.create_release
+      - name: build Android debug apk
+        working-directory: apps/readest-app
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ steps.meta.outputs.tag }}
-          RELEASE_NAME: ${{ steps.meta.outputs.name }}
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: pnpm tauri android build --debug -t aarch64
+
+      - name: collect APK asset
         shell: bash
         run: |
           version="${{ steps.meta.outputs.version }}"
           mkdir -p dist-release
           cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
             "dist-release/Readest_CWA_${version}_arm64_debug.apk"
+          ls -lh dist-release
 
+      - name: create GitHub release and upload APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag }}
+          RELEASE_NAME: ${{ steps.meta.outputs.name }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        shell: bash
+        run: |
           cat > release-notes.md <<EOF
           Personal Readest CWA Android build from ${GITHUB_SHA}.
 
@@ -131,17 +132,14 @@ jobs:
           - APK is a debug-signed arm64 build for direct install
           EOF
 
+          prerelease_flag=""
+          if [ "$PRERELEASE" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+
           gh release create "$TAG_NAME" dist-release/*.apk \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
             --notes-file release-notes.md \
-            --prerelease
-
-      - name: upload apk artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: readest-cwa-android-apks
-          path: apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-          retention-days: 7
+            $prerelease_flag
