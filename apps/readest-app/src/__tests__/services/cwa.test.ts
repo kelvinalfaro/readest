@@ -1,26 +1,46 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Book } from '@/types/book';
 import type { AppService } from '@/types/system';
 import type { SystemSettings } from '@/types/settings';
 import {
   cleanupFinishedCWABooks,
+  CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+  CWA_DOWNLOAD_CONCURRENCY,
+  CWA_DOWNLOAD_DELAY_MS,
+  discoverCWAShelves,
   getCWAKOSyncUrl,
   getCWAOPDSUrl,
+  getCWASettings,
+  hasEnabledCWASubscriptions,
   normalizeCWABaseUrl,
   syncCWASubscriptions,
 } from '@/services/cwa';
 
 const syncSubscribedCatalogs = vi.hoisted(() => vi.fn());
+const fetchWithAuth = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/opds', () => ({
   syncSubscribedCatalogs,
 }));
 
+vi.mock('@/app/opds/utils/opdsReq', () => ({
+  fetchWithAuth,
+}));
+
+vi.mock('@/services/environment', () => ({
+  isWebAppPlatform: () => false,
+}));
+
+beforeEach(() => {
+  syncSubscribedCatalogs.mockReset();
+  fetchWithAuth.mockReset();
+});
+
 const makeSettings = (overrides: Partial<SystemSettings> = {}): SystemSettings =>
   ({
     cwa: {
       enabled: true,
-      serverUrl: 'https://books.alfaro.io/books',
+      serverUrl: 'https://cwa.example/books',
       username: 'alice',
       password: 'secret',
       subscriptions: [
@@ -60,20 +80,40 @@ const makeBook = (overrides: Partial<Book> = {}): Book =>
   }) as Book;
 
 describe('CWA URL helpers', () => {
+  it('uses blank public defaults', () => {
+    const settings = getCWASettings({} as SystemSettings);
+
+    expect(settings.enabled).toBe(false);
+    expect(settings.serverUrl).toBe('');
+    expect(settings.subscriptions).toEqual([]);
+    expect(getCWAOPDSUrl(settings)).toBe('');
+    expect(getCWAKOSyncUrl(settings)).toBe('');
+    expect(hasEnabledCWASubscriptions({ cwa: settings } as SystemSettings)).toBe(false);
+  });
+
   it('normalizes CWA base, OPDS, and KOSync URLs without duplicates', () => {
-    expect(normalizeCWABaseUrl('https://books.alfaro.io/books/')).toBe(
-      'https://books.alfaro.io/books',
+    expect(normalizeCWABaseUrl('https://cwa.example/books/')).toBe('https://cwa.example/books');
+    expect(getCWAOPDSUrl({ serverUrl: 'https://cwa.example/books/kosync' })).toBe(
+      'https://cwa.example/books/opds',
     );
-    expect(getCWAOPDSUrl({ serverUrl: 'https://books.alfaro.io/books/kosync' })).toBe(
-      'https://books.alfaro.io/books/opds',
-    );
-    expect(getCWAKOSyncUrl({ serverUrl: 'https://books.alfaro.io/books/kosync' })).toBe(
-      'https://books.alfaro.io/books/kosync',
+    expect(getCWAKOSyncUrl({ serverUrl: 'https://cwa.example/books/kosync' })).toBe(
+      'https://cwa.example/books/kosync',
     );
   });
 });
 
 describe('syncCWASubscriptions', () => {
+  it('skips sync when CWA is not configured', async () => {
+    const result = await syncCWASubscriptions(
+      {} as AppService,
+      { cwa: undefined } as unknown as SystemSettings,
+      [],
+    );
+
+    expect(result).toEqual({ newBooks: [], totalNewBooks: 0, errors: [] });
+    expect(syncSubscribedCatalogs).not.toHaveBeenCalled();
+  });
+
   it('syncs only enabled subscriptions and stamps imported books', async () => {
     const imported = makeBook({ hash: 'imported' });
     syncSubscribedCatalogs.mockImplementationOnce(
@@ -82,13 +122,13 @@ describe('syncCWASubscriptions', () => {
           book: imported,
           catalogId: 'cwa-sub-new',
           catalogName: 'New',
-          sourceUrl: 'https://books.alfaro.io/books/get/1.epub',
+          sourceUrl: 'https://cwa.example/books/get/1.epub',
           item: {
             entryId: '1',
             title: 'Book',
             acquisitionHref: '/get/1.epub',
             mimeType: 'application/epub+zip',
-            baseURL: 'https://books.alfaro.io/books/opds/new',
+            baseURL: 'https://cwa.example/books/opds/new',
           },
         });
         return { newBooks: [imported], totalNewBooks: 1, errors: [] };
@@ -99,14 +139,64 @@ describe('syncCWASubscriptions', () => {
 
     const [catalogs, , , options] = syncSubscribedCatalogs.mock.calls[0]!;
     expect(catalogs).toHaveLength(1);
-    expect(catalogs[0].url).toBe('https://books.alfaro.io/books/opds/new');
-    expect(options.limitByCatalogId).toEqual({ 'cwa-sub-new': 10 });
+    expect(catalogs[0].url).toBe('https://cwa.example/books/opds/new');
+    expect(options.limitByCatalogId).toEqual({ 'cwa-sub-new': CWA_DEFAULT_SUBSCRIPTION_LIMIT });
+    expect(options.downloadConcurrency).toBe(CWA_DOWNLOAD_CONCURRENCY);
+    expect(options.delayBetweenDownloadsMs).toBe(CWA_DOWNLOAD_DELAY_MS);
     expect(imported.cwaSource).toMatchObject({
       subscriptionId: 'new',
       subscriptionName: 'New',
       catalogId: 'cwa-sub-new',
-      sourceUrl: 'https://books.alfaro.io/books/get/1.epub',
+      sourceUrl: 'https://cwa.example/books/get/1.epub',
     });
+  });
+});
+
+describe('discoverCWAShelves', () => {
+  it('discovers shelf-like OPDS navigation entries and nested shelf items', async () => {
+    fetchWithAuth
+      .mockResolvedValueOnce({
+        ok: true,
+        url: 'https://cwa.example/books/opds',
+        text: async () => `<?xml version="1.0" encoding="utf-8"?>
+          <feed xmlns="http://www.w3.org/2005/Atom">
+            <title>CWA</title>
+            <link rel="self" href="/books/opds" />
+            <entry>
+              <title>Magic Shelves</title>
+              <link type="application/atom+xml;profile=opds-catalog" href="/books/opds/magic" />
+            </entry>
+            <entry>
+              <title>Unread Books</title>
+              <link type="application/atom+xml;profile=opds-catalog" href="/books/opds/unread" />
+            </entry>
+          </feed>`,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        url: 'https://cwa.example/books/opds/magic',
+        text: async () => `<?xml version="1.0" encoding="utf-8"?>
+          <feed xmlns="http://www.w3.org/2005/Atom">
+            <title>Magic Shelves</title>
+            <entry>
+              <title>Currently Reading</title>
+              <link type="application/atom+xml;profile=opds-catalog" href="/books/opds/magic/1" />
+            </entry>
+          </feed>`,
+      });
+
+    const shelves = await discoverCWAShelves({
+      serverUrl: 'https://cwa.example/books',
+      username: 'alice',
+      password: 'secret',
+    });
+
+    expect(shelves.map((shelf) => shelf.name)).toEqual([
+      'Currently Reading',
+      'Magic Shelves',
+      'Unread Books',
+    ]);
+    expect(shelves[0]!.url).toBe('https://cwa.example/books/opds/magic/1');
   });
 });
 
@@ -119,7 +209,7 @@ describe('cleanupFinishedCWABooks', () => {
         subscriptionId: 'new',
         subscriptionName: 'New',
         catalogId: 'cwa-sub-new',
-        sourceUrl: 'https://books.alfaro.io/books/get/1.epub',
+        sourceUrl: 'https://cwa.example/books/get/1.epub',
         downloadedAt: 1,
       },
     });
@@ -155,7 +245,7 @@ describe('cleanupFinishedCWABooks', () => {
         subscriptionId: 'new',
         subscriptionName: 'New',
         catalogId: 'cwa-sub-new',
-        sourceUrl: 'https://books.alfaro.io/books/get/1.epub',
+        sourceUrl: 'https://cwa.example/books/get/1.epub',
         downloadedAt: 1,
       },
     });

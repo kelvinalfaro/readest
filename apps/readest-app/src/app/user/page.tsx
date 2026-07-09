@@ -51,7 +51,7 @@ type CheckoutState = {
   planName: string;
 };
 
-const SHOW_PREMIUM_SURFACES = false;
+const SHOW_PREMIUM_SURFACES = true;
 
 const ProfilePage = () => {
   const _ = useTranslation();

@@ -85,11 +85,30 @@ jobs:
           } > .env.local
           cp .env.local apps/readest-app/.env.local
 
-      - name: build Android debug apk
+      - name: create Android signing config
+        working-directory: apps/readest-app/src-tauri/gen/android
+        shell: bash
+        env:
+          CWA_ANDROID_KEY_BASE64: ${{ secrets.CWA_ANDROID_KEY_BASE64 }}
+          CWA_ANDROID_KEY_ALIAS: ${{ secrets.CWA_ANDROID_KEY_ALIAS }}
+          CWA_ANDROID_KEY_PASSWORD: ${{ secrets.CWA_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CWA_ANDROID_KEY_BASE64" ] || [ -z "$CWA_ANDROID_KEY_ALIAS" ] || [ -z "$CWA_ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::CWA Android signing secrets are required."
+            exit 1
+          fi
+          base64 -d <<< "$CWA_ANDROID_KEY_BASE64" > "$RUNNER_TEMP/cwa-keystore.jks"
+          {
+            echo "keyAlias=$CWA_ANDROID_KEY_ALIAS"
+            echo "password=$CWA_ANDROID_KEY_PASSWORD"
+            echo "storeFile=$RUNNER_TEMP/cwa-keystore.jks"
+          } > keystore.properties
+
+      - name: build Android release apk
         working-directory: apps/readest-app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: pnpm tauri android build --debug -t aarch64
+        run: pnpm tauri android build --release -t aarch64
 
       - name: derive release metadata
         if: github.event_name == 'workflow_dispatch' && inputs.create_release
@@ -119,16 +138,15 @@ jobs:
         run: |
           version="${{ steps.meta.outputs.version }}"
           mkdir -p dist-release
-          cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/debug/app-universal-debug.apk \
-            "dist-release/Readest_CWA_${version}_arm64_debug.apk"
+          cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+            "dist-release/Readest_CWA_${version}_arm64.apk"
 
           cat > release-notes.md <<EOF
-          Personal Readest CWA Android build from ${GITHUB_SHA}.
+          Readest CWA Android build from ${GITHUB_SHA}.
 
           - Package: com.bilingify.readest.cwa
-          - KOSync fallback patch included
-          - Premium advertising surfaces hidden
-          - APK is a debug-signed arm64 build for direct install
+          - CWA Library OPDS integration included
+          - APK is a signed arm64 release build for direct install
           EOF
 
           gh release create "$TAG_NAME" dist-release/*.apk \

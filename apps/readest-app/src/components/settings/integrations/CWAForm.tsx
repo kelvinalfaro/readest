@@ -10,12 +10,16 @@ import { eventDispatcher } from '@/utils/event';
 import {
   buildCWACatalog,
   cleanupFinishedCWABooks,
+  CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+  discoverCWAShelves,
   getCWAKOSyncUrl,
   getCWAOPDSUrl,
   getCWASettings,
   normalizeCWABaseUrl,
+  resolveCWAUrl,
   syncCWASubscriptions,
 } from '@/services/cwa';
+import type { CWAShelfCandidate } from '@/services/cwa';
 import type { CWASettings, CWASubscription } from '@/types/settings';
 import SubPageHeader from '../SubPageHeader';
 import { BoxedList, SectionTitle, SettingLabel, Tips } from '../primitives';
@@ -35,8 +39,14 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
   const [username, setUsername] = useState(cwa.username);
   const [password, setPassword] = useState(cwa.password);
   const [syncing, setSyncing] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [discoveredShelves, setDiscoveredShelves] = useState<CWAShelfCandidate[]>([]);
+  const [selectedShelfUrl, setSelectedShelfUrl] = useState('');
+  const [showManualAdd, setShowManualAdd] = useState(false);
   const [newSubName, setNewSubName] = useState('');
   const [newSubUrl, setNewSubUrl] = useState('');
+  const normalizedServerUrl = normalizeCWABaseUrl(serverUrl);
+  const hasServerUrl = !!normalizedServerUrl;
 
   const persistCWA = async (patch: Partial<CWASettings>) => {
     const latest = useSettingsStore.getState().settings;
@@ -88,13 +98,75 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       name: newSubName.trim(),
       url: newSubUrl.trim(),
       enabled: true,
-      limit: 25,
+      limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
       formatPreference: ['epub', 'kepub', 'pdf'],
       cleanupPolicy: 'never',
     };
     await persistCWA({ subscriptions: [...latest.subscriptions, subscription] });
     setNewSubName('');
     setNewSubUrl('');
+  };
+
+  const discoverShelves = async () => {
+    if (!hasServerUrl || discovering) return;
+    setDiscovering(true);
+    try {
+      await persistCWA({
+        enabled: true,
+        serverUrl: normalizedServerUrl,
+        username,
+        password,
+      });
+      const shelves = await discoverCWAShelves({
+        serverUrl: normalizedServerUrl,
+        username,
+        password,
+      });
+      setDiscoveredShelves(shelves);
+      setSelectedShelfUrl(shelves[0]?.url ?? '');
+      eventDispatcher.dispatch('toast', {
+        type: shelves.length ? 'info' : 'warning',
+        timeout: 2500,
+        message: shelves.length
+          ? _('Found {{count}} CWA shelf/shelves', { count: shelves.length })
+          : _('No CWA shelves found'),
+      });
+    } catch (error) {
+      eventDispatcher.dispatch('toast', {
+        type: 'error',
+        timeout: 4000,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const addDiscoveredSubscription = async () => {
+    const shelf = discoveredShelves.find((item) => item.url === selectedShelfUrl);
+    if (!shelf) return;
+    const latest = getCWASettings(useSettingsStore.getState().settings);
+    const alreadyAdded = latest.subscriptions.some(
+      (sub) => resolveCWAUrl(latest, sub.url) === shelf.url,
+    );
+    if (alreadyAdded) {
+      eventDispatcher.dispatch('toast', {
+        type: 'info',
+        timeout: 2000,
+        message: _('Shelf already added'),
+      });
+      return;
+    }
+    const subscription: CWASubscription = {
+      id: shelf.id,
+      name: shelf.name,
+      url: shelf.url,
+      enabled: true,
+      limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+      formatPreference: ['epub', 'kepub', 'pdf'],
+      cleanupPolicy: 'never',
+    };
+    await persistCWA({ subscriptions: [...latest.subscriptions, subscription] });
   };
 
   const removeSubscription = async (id: string) => {
@@ -197,18 +269,23 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
             </div>
           </div>
           <div className='text-base-content/70 text-sm'>
-            <div>{_('OPDS')}: {getCWAOPDSUrl({ serverUrl })}</div>
-            <div>{_('KOSync')}: {getCWAKOSyncUrl({ serverUrl })}</div>
+            <div>{_('OPDS')}: {getCWAOPDSUrl({ serverUrl }) || _('Enter a server URL')}</div>
+            <div>{_('KOSync')}: {getCWAKOSyncUrl({ serverUrl }) || _('Enter a server URL')}</div>
           </div>
           <div className='flex flex-wrap gap-2'>
-            <button className='btn btn-primary btn-sm' type='button' onClick={ensureCatalogAndOpen}>
+            <button
+              className='btn btn-primary btn-sm'
+              type='button'
+              disabled={!hasServerUrl}
+              onClick={ensureCatalogAndOpen}
+            >
               <RiBookOpenLine className='h-4 w-4' />
               {_('Open CWA Library')}
             </button>
             <button
               className='btn btn-outline btn-sm'
               type='button'
-              disabled={syncing}
+              disabled={syncing || !hasServerUrl}
               onClick={handleSyncNow}
             >
               <RiRefreshLine className='h-4 w-4' />
@@ -219,25 +296,69 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
 
         <div>
           <SectionTitle className='mb-2'>{_('CWA Subscriptions')}</SectionTitle>
-          <div className='mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]'>
-            <input
-              type='text'
-              className='input input-bordered input-sm'
-              placeholder={_('Shelf name')}
-              value={newSubName}
-              onChange={(e) => setNewSubName(e.target.value)}
-            />
-            <input
-              type='text'
-              className='input input-bordered input-sm'
-              placeholder='/opds/magicshelf/25'
-              value={newSubUrl}
-              onChange={(e) => setNewSubUrl(e.target.value)}
-            />
-            <button className='btn btn-outline btn-sm' type='button' onClick={addSubscription}>
-              {_('Add')}
-            </button>
+          <div className='mb-3 space-y-2'>
+            <div className='flex flex-wrap gap-2'>
+              <button
+                className='btn btn-outline btn-sm'
+                type='button'
+                disabled={!hasServerUrl || discovering}
+                onClick={discoverShelves}
+              >
+                <RiRefreshLine className='h-4 w-4' />
+                {discovering ? _('Discovering...') : _('Discover Shelves')}
+              </button>
+              <button
+                className='btn btn-ghost btn-sm'
+                type='button'
+                onClick={() => setShowManualAdd((value) => !value)}
+              >
+                {showManualAdd ? _('Hide Manual Add') : _('Manual OPDS Path')}
+              </button>
+            </div>
+            {discoveredShelves.length > 0 && (
+              <div className='grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]'>
+                <select
+                  className='select select-bordered select-sm'
+                  value={selectedShelfUrl}
+                  onChange={(e) => setSelectedShelfUrl(e.target.value)}
+                >
+                  {discoveredShelves.map((shelf) => (
+                    <option key={shelf.url} value={shelf.url}>
+                      {shelf.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className='btn btn-outline btn-sm'
+                  type='button'
+                  onClick={addDiscoveredSubscription}
+                >
+                  {_('Add Shelf')}
+                </button>
+              </div>
+            )}
           </div>
+          {showManualAdd && (
+            <div className='mb-3 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]'>
+              <input
+                type='text'
+                className='input input-bordered input-sm'
+                placeholder={_('Shelf name')}
+                value={newSubName}
+                onChange={(e) => setNewSubName(e.target.value)}
+              />
+              <input
+                type='text'
+                className='input input-bordered input-sm'
+                placeholder='/opds/shelf/...'
+                value={newSubUrl}
+                onChange={(e) => setNewSubUrl(e.target.value)}
+              />
+              <button className='btn btn-outline btn-sm' type='button' onClick={addSubscription}>
+                {_('Add')}
+              </button>
+            </div>
+          )}
           <BoxedList>
             {cwa.subscriptions.map((sub) => (
               <div key={sub.id} className='space-y-3 px-4 py-3'>

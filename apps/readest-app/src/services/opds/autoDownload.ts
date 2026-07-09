@@ -24,6 +24,8 @@ import type {
 } from './types';
 import { runWithConcurrency } from '@/utils/concurrency';
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
  * Download a single item and import it into the library.
  */
@@ -168,9 +170,17 @@ async function syncCatalog(
   }
 
   // Acquisition: download with bounded concurrency
-  const downloadResults = await runWithConcurrency(allItems, DOWNLOAD_CONCURRENCY, (item) =>
-    downloadAndImport(item, catalog, appService, books),
-  );
+  const downloadConcurrency = options.downloadConcurrency ?? DOWNLOAD_CONCURRENCY;
+  const delayBetweenDownloadsMs = Math.max(0, options.delayBetweenDownloadsMs ?? 0);
+  let completedDownloads = 0;
+  const downloadResults = await runWithConcurrency(allItems, downloadConcurrency, async (item) => {
+    const book = await downloadAndImport(item, catalog, appService, books);
+    completedDownloads += 1;
+    if (delayBetweenDownloadsMs > 0 && completedDownloads < allItems.length) {
+      await sleep(delayBetweenDownloadsMs);
+    }
+    return book;
+  });
 
   // Process results and update state
   const newBooks: Book[] = [];

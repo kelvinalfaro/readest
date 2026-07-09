@@ -48,7 +48,7 @@ import type { FileSyncBackendKind } from '@/services/sync/file/providerRegistry'
 import SubPageHeader from './SubPageHeader';
 import { BoxedList, NavigationRow, SectionTitle, SettingLabel, Tips } from './primitives';
 
-const SHOW_PREMIUM_SURFACES = false;
+const SHOW_PREMIUM_SURFACES = true;
 
 type SubPage =
   | 'kosync'

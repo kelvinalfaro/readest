@@ -51,6 +51,8 @@ export interface SyncResult {
 
 export interface OPDSSyncOptions {
   limitByCatalogId?: Record<string, number>;
+  downloadConcurrency?: number;
+  delayBetweenDownloadsMs?: number;
   onBookImported?: (input: {
     book: Book;
     catalogId: string;

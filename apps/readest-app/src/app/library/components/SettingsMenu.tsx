@@ -44,7 +44,7 @@ import Quota from '@/components/Quota';
 import Menu from '@/components/Menu';
 import { type AppLockDialogMode, useAppLockStore } from '@/store/appLockStore';
 
-const SHOW_PREMIUM_SURFACES = false;
+const SHOW_PREMIUM_SURFACES = true;
 
 interface SettingsMenuProps {
   onPullLibrary: (fullRefresh?: boolean, verbose?: boolean) => void;

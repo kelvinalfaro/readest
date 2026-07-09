@@ -77,30 +77,11 @@ export const DEFAULT_KOSYNC_SETTINGS = {
 } as KOSyncSettings;
 
 export const DEFAULT_CWA_SETTINGS = {
-  enabled: true,
-  serverUrl: 'https://books.alfaro.io/books',
+  enabled: false,
+  serverUrl: '',
   username: '',
   password: '',
-  subscriptions: [
-    {
-      id: 'cwa-new',
-      name: 'New Books',
-      url: 'https://books.alfaro.io/books/opds/new',
-      enabled: false,
-      limit: 25,
-      formatPreference: ['epub', 'kepub', 'pdf'],
-      cleanupPolicy: 'never',
-    },
-    {
-      id: 'cwa-unread',
-      name: 'Unread Books',
-      url: 'https://books.alfaro.io/books/opds/unreadbooks',
-      enabled: false,
-      limit: 25,
-      formatPreference: ['epub', 'kepub', 'pdf'],
-      cleanupPolicy: 'never',
-    },
-  ],
+  subscriptions: [],
 } as CWASettings;
 
 export const READWISE_API_BASE_URL = 'https://readwise.io/api/v2';
