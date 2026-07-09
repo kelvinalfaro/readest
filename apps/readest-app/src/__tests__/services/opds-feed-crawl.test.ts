@@ -100,6 +100,27 @@ beforeEach(() => {
 });
 
 describe('checkFeedForNewItems directory crawl (#4272)', () => {
+  it('preserves server read status on pending OPDS entries', async () => {
+    feeds[BASE] = feedXML(
+      'Kids',
+      bookEntry('urn:uuid:read', 'Read.epub', '/dl/read.epub').replace(
+        '</entry>',
+        '<category term="Read" label="Read" /></entry>',
+      ) +
+        bookEntry('urn:uuid:unread', 'Unread.epub', '/dl/unread.epub').replace(
+          '</entry>',
+          '<category term="Unread" label="Unread" /></entry>',
+        ),
+    );
+
+    const items = await checkFeedForNewItems(makeCatalog(), emptyState());
+
+    expect(items.find((item) => item.entryId === 'urn:uuid:read')?.serverReadStatus).toBe('read');
+    expect(items.find((item) => item.entryId === 'urn:uuid:unread')?.serverReadStatus).toBe(
+      'unread',
+    );
+  });
+
   it('collects books from subdirectories of a directory-style catalog', async () => {
     feeds[BASE] = feedXML(
       'Kids',

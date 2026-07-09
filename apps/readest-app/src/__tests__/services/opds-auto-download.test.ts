@@ -167,6 +167,39 @@ describe('OPDS auto-download orchestrator', () => {
     });
   });
 
+  it('applies skip callback before per-catalog limits', async () => {
+    const catalogs: OPDSCatalog[] = [
+      { id: 'cat-1', name: 'Shelf', url: 'https://shelf.example.com/opds', autoDownload: true },
+    ];
+    vi.mocked(checkFeedForNewItems).mockResolvedValue([
+      {
+        entryId: 'urn:shelf:read',
+        title: 'Read Book',
+        acquisitionHref: '/dl/read.epub',
+        mimeType: 'application/epub+zip',
+        baseURL: 'https://shelf.example.com/opds',
+      },
+      {
+        entryId: 'urn:shelf:unread',
+        title: 'Unread Book',
+        acquisitionHref: '/dl/unread.epub',
+        mimeType: 'application/epub+zip',
+        baseURL: 'https://shelf.example.com/opds',
+      },
+    ]);
+
+    const result = await syncSubscribedCatalogs(catalogs, appService, [], {
+      limitByCatalogId: { 'cat-1': 1 },
+      shouldSkipItem: ({ item }) => item.entryId === 'urn:shelf:read',
+    });
+
+    expect(result.totalNewBooks).toBe(1);
+    expect(downloadFile).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(downloadFile).mock.calls[0]![0].url).toBe(
+      'https://shelf.example.com/dl/unread.epub',
+    );
+  });
+
   it('handles import failure by adding to failedEntries', async () => {
     const catalogs: OPDSCatalog[] = [
       { id: 'cat-1', name: 'Test', url: 'https://example.com/opds', autoDownload: true },

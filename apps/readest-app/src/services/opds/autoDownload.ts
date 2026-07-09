@@ -159,6 +159,24 @@ async function syncCatalog(
     seenIds.add(item.entryId);
     allItems.push(item);
   }
+
+  if (options.shouldSkipItem) {
+    const filteredItems: PendingItem[] = [];
+    for (const item of allItems) {
+      const sourceUrl = resolveURL(item.acquisitionHref, item.baseURL);
+      const shouldSkip = await options.shouldSkipItem({
+        item,
+        catalogId: catalog.id,
+        catalogName: catalog.name,
+        sourceUrl,
+      });
+      if (!shouldSkip) {
+        filteredItems.push(item);
+      }
+    }
+    allItems = filteredItems;
+  }
+
   const limit = options.limitByCatalogId?.[catalog.id];
   if (limit && limit > 0) {
     allItems = allItems.slice(0, limit);

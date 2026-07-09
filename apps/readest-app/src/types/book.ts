@@ -126,6 +126,7 @@ export interface Book {
     subscriptionId: string;
     subscriptionName: string;
     catalogId: string;
+    entryId?: string;
     sourceUrl: string;
     downloadedAt: number;
   };

@@ -16,6 +16,7 @@ import {
   getCWAOPDSUrl,
   getCWASettings,
   normalizeCWABaseUrl,
+  resetCWASyncHistory,
   resolveCWAUrl,
   syncCWASubscriptions,
 } from '@/services/cwa';
@@ -101,6 +102,7 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
       formatPreference: ['epub', 'kepub', 'pdf'],
       cleanupPolicy: 'never',
+      excludeServerRead: true,
     };
     await persistCWA({ subscriptions: [...latest.subscriptions, subscription] });
     setNewSubName('');
@@ -165,6 +167,7 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
       formatPreference: ['epub', 'kepub', 'pdf'],
       cleanupPolicy: 'never',
+      excludeServerRead: true,
     };
     await persistCWA({ subscriptions: [...latest.subscriptions, subscription] });
   };
@@ -217,6 +220,16 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleResetSyncHistory = async () => {
+    if (!appService) return;
+    await resetCWASyncHistory(appService, settings);
+    eventDispatcher.dispatch('toast', {
+      type: 'info',
+      timeout: 2500,
+      message: _('CWA sync history reset'),
+    });
   };
 
   return (
@@ -314,6 +327,14 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
               >
                 {showManualAdd ? _('Hide Manual Add') : _('Manual OPDS Path')}
               </button>
+              <button
+                className='btn btn-ghost btn-sm'
+                type='button'
+                disabled={!appService}
+                onClick={handleResetSyncHistory}
+              >
+                {_('Reset CWA Sync History')}
+              </button>
             </div>
             {discoveredShelves.length > 0 && (
               <div className='grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]'>
@@ -393,7 +414,9 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
                       className='input input-bordered input-sm'
                       value={sub.limit}
                       onChange={(e) =>
-                        updateSubscription(sub.id, { limit: Number(e.target.value) || 25 })
+                        updateSubscription(sub.id, {
+                          limit: Number(e.target.value) || CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+                        })
                       }
                     />
                   </label>
@@ -411,6 +434,19 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
                       <option value='never'>{_('Never remove local copy')}</option>
                       <option value='finished'>{_('Remove when finished')}</option>
                     </select>
+                  </label>
+                  <label className='label cursor-pointer justify-start gap-3 sm:col-span-2'>
+                    <input
+                      type='checkbox'
+                      className='checkbox checkbox-sm'
+                      checked={sub.excludeServerRead !== false}
+                      onChange={(e) =>
+                        updateSubscription(sub.id, { excludeServerRead: e.target.checked })
+                      }
+                    />
+                    <span className='label-text'>
+                      {_('Exclude books marked read on the server')}
+                    </span>
                   </label>
                 </div>
               </div>

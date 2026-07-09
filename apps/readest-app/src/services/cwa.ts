@@ -8,18 +8,36 @@ import { looksLikeXMLContent, parseOPDSXML, resolveURL } from '@/app/opds/utils/
 import { isWebAppPlatform } from '@/services/environment';
 import { DEFAULT_CWA_SETTINGS } from './constants';
 import { syncSubscribedCatalogs } from './opds';
+import { deleteSubscriptionState } from './opds/subscriptionState';
 import { computeOpdsCatalogContentId } from './sync/adapters/opdsCatalog';
 
 export const CWA_CATALOG_ID = 'cwa-library';
 export const CWA_CATALOG_NAME = 'CWA Library';
 export const CWA_DEFAULT_SUBSCRIPTION_LIMIT = 10;
 export const CWA_DOWNLOAD_CONCURRENCY = 1;
-export const CWA_DOWNLOAD_DELAY_MS = 2000;
+export const CWA_DOWNLOAD_DELAY_MS = 5000;
+const CWA_STATE_DIR = 'CWA';
+const CWA_READ_STATE_PATH = `${CWA_STATE_DIR}/read-suppression.json`;
 
 export interface CWAShelfCandidate {
   id: string;
   name: string;
   url: string;
+}
+
+interface CWAReadSuppressionEntry {
+  subscriptionId: string;
+  catalogId: string;
+  entryId?: string;
+  sourceUrl?: string;
+  title?: string;
+  bookHash?: string;
+  finishedAt: number;
+}
+
+interface CWAReadSuppressionState {
+  version: 1;
+  entries: CWAReadSuppressionEntry[];
 }
 
 const trimTrailingSlashes = (value: string): string => value.trim().replace(/\/+$/, '');
@@ -113,6 +131,75 @@ const parseOPDSFeed = (text: string): OPDSFeed | null => {
   return null;
 };
 
+const emptyReadSuppressionState = (): CWAReadSuppressionState => ({ version: 1, entries: [] });
+
+const normalizeSourceUrl = (url?: string): string => (url || '').trim();
+
+const readSuppressionKey = (entry: {
+  subscriptionId: string;
+  entryId?: string;
+  sourceUrl?: string;
+}) => `${entry.subscriptionId}:${entry.entryId || normalizeSourceUrl(entry.sourceUrl)}`;
+
+const loadReadSuppressionState = async (
+  appService: AppService,
+): Promise<CWAReadSuppressionState> => {
+  try {
+    const exists = await appService.exists(CWA_READ_STATE_PATH, 'Data');
+    if (!exists) return emptyReadSuppressionState();
+    const content = await appService.readFile(CWA_READ_STATE_PATH, 'Data', 'text');
+    const parsed = JSON.parse(content as string) as CWAReadSuppressionState;
+    return {
+      version: 1,
+      entries: Array.isArray(parsed.entries) ? parsed.entries : [],
+    };
+  } catch {
+    console.error('CWA: failed to load read suppression state, using empty state');
+    return emptyReadSuppressionState();
+  }
+};
+
+const saveReadSuppressionState = async (
+  appService: AppService,
+  state: CWAReadSuppressionState,
+) => {
+  await appService.createDir(CWA_STATE_DIR, 'Data', true);
+  await appService.writeFile(CWA_READ_STATE_PATH, 'Data', JSON.stringify(state, null, 2));
+};
+
+export const recordFinishedCWAReadSuppressions = async (
+  appService: AppService,
+  books: Book[],
+): Promise<CWAReadSuppressionEntry[]> => {
+  const finished = books.filter((book) => {
+    if (book.deletedAt || book.readingStatus !== 'finished' || !book.cwaSource) return false;
+    return !!(book.cwaSource.entryId || book.cwaSource.sourceUrl);
+  });
+  if (finished.length === 0) return [];
+
+  const state = await loadReadSuppressionState(appService);
+  const byKey = new Map(state.entries.map((entry) => [readSuppressionKey(entry), entry]));
+  const recorded: CWAReadSuppressionEntry[] = [];
+  const now = Date.now();
+
+  for (const book of finished) {
+    const entry: CWAReadSuppressionEntry = {
+      subscriptionId: book.cwaSource!.subscriptionId,
+      catalogId: book.cwaSource!.catalogId,
+      entryId: book.cwaSource!.entryId,
+      sourceUrl: book.cwaSource!.sourceUrl,
+      title: book.title,
+      bookHash: book.hash,
+      finishedAt: book.readingStatusUpdatedAt ?? now,
+    };
+    byKey.set(readSuppressionKey(entry), entry);
+    recorded.push(entry);
+  }
+
+  await saveReadSuppressionState(appService, { version: 1, entries: Array.from(byKey.values()) });
+  return recorded;
+};
+
 const fetchCWAFeed = async (
   url: string,
   username: string,
@@ -203,18 +290,46 @@ export const syncCWASubscriptions = async (
       Math.max(1, enabled[index]!.limit || CWA_DEFAULT_SUBSCRIPTION_LIMIT),
     ]),
   );
+  await recordFinishedCWAReadSuppressions(appService, books);
+  const readState = await loadReadSuppressionState(appService);
+  const suppressedKeys = new Set(readState.entries.map(readSuppressionKey));
+  const localFinishedKeys = new Set(
+    books
+      .filter((book) => book.readingStatus === 'finished' && !book.deletedAt && book.cwaSource)
+      .map((book) =>
+        readSuppressionKey({
+          subscriptionId: book.cwaSource!.subscriptionId,
+          entryId: book.cwaSource!.entryId,
+          sourceUrl: book.cwaSource!.sourceUrl,
+        }),
+      ),
+  );
 
   const result = await syncSubscribedCatalogs(catalogs, appService, books, {
     limitByCatalogId,
     downloadConcurrency: CWA_DOWNLOAD_CONCURRENCY,
     delayBetweenDownloadsMs: CWA_DOWNLOAD_DELAY_MS,
-    onBookImported: ({ book, catalogId, catalogName, sourceUrl }) => {
+    shouldSkipItem: ({ item, catalogId, sourceUrl }) => {
+      const subscription = byCatalogId.get(catalogId);
+      if (!subscription) return false;
+      if (subscription.excludeServerRead !== false && item.serverReadStatus === 'read') {
+        return true;
+      }
+      const key = readSuppressionKey({
+        subscriptionId: subscription.id,
+        entryId: item.entryId,
+        sourceUrl,
+      });
+      return suppressedKeys.has(key) || localFinishedKeys.has(key);
+    },
+    onBookImported: ({ book, catalogId, catalogName, sourceUrl, item }) => {
       const subscription = byCatalogId.get(catalogId);
       if (!subscription) return;
       book.cwaSource = {
         subscriptionId: subscription.id,
         subscriptionName: subscription.name || catalogName,
         catalogId,
+        entryId: item.entryId,
         sourceUrl,
         downloadedAt: Date.now(),
       };
@@ -251,6 +366,7 @@ export const cleanupFinishedCWABooks = async (
     }
 
     await appService.deleteBook(book, 'local');
+    await recordFinishedCWAReadSuppressions(appService, [book]);
     book.deletedAt = Date.now();
     book.updatedAt = Date.now();
     book.downloadedAt = null;
@@ -258,4 +374,16 @@ export const cleanupFinishedCWABooks = async (
     cleaned.push(book);
   }
   return cleaned;
+};
+
+export const resetCWASyncHistory = async (appService: AppService, settings: SystemSettings) => {
+  const cwa = getCWASettings(settings);
+  for (const subscription of cwa.subscriptions) {
+    await deleteSubscriptionState(appService, `cwa-sub-${subscription.id}`);
+  }
+  try {
+    await appService.deleteFile(CWA_READ_STATE_PATH, 'Data');
+  } catch {
+    // Missing state is fine.
+  }
 };

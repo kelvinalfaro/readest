@@ -94,6 +94,7 @@ export interface CWASubscription {
   limit: number;
   formatPreference: CWAFormatPreference[];
   cleanupPolicy: CWACleanupPolicy;
+  excludeServerRead?: boolean;
   allowCleanupWithNotes?: boolean;
 }
 

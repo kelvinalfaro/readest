@@ -26,6 +26,7 @@ export interface PendingItem {
   mimeType: string;
   updated?: string;
   baseURL: string;
+  serverReadStatus?: 'read' | 'unread' | 'unknown';
 }
 
 export interface FailedEntry {
@@ -53,6 +54,12 @@ export interface OPDSSyncOptions {
   limitByCatalogId?: Record<string, number>;
   downloadConcurrency?: number;
   delayBetweenDownloadsMs?: number;
+  shouldSkipItem?: (input: {
+    item: PendingItem;
+    catalogId: string;
+    catalogName: string;
+    sourceUrl: string;
+  }) => boolean | Promise<boolean>;
   onBookImported?: (input: {
     book: Book;
     catalogId: string;

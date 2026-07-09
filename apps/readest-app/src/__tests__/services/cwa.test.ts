@@ -13,14 +13,21 @@ import {
   getCWASettings,
   hasEnabledCWASubscriptions,
   normalizeCWABaseUrl,
+  recordFinishedCWAReadSuppressions,
+  resetCWASyncHistory,
   syncCWASubscriptions,
 } from '@/services/cwa';
 
 const syncSubscribedCatalogs = vi.hoisted(() => vi.fn());
 const fetchWithAuth = vi.hoisted(() => vi.fn());
+const deleteSubscriptionState = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/opds', () => ({
   syncSubscribedCatalogs,
+}));
+
+vi.mock('@/services/opds/subscriptionState', () => ({
+  deleteSubscriptionState,
 }));
 
 vi.mock('@/app/opds/utils/opdsReq', () => ({
@@ -34,6 +41,7 @@ vi.mock('@/services/environment', () => ({
 beforeEach(() => {
   syncSubscribedCatalogs.mockReset();
   fetchWithAuth.mockReset();
+  deleteSubscriptionState.mockReset();
 });
 
 const makeSettings = (overrides: Partial<SystemSettings> = {}): SystemSettings =>
@@ -78,6 +86,18 @@ const makeBook = (overrides: Partial<Book> = {}): Book =>
     downloadedAt: 1,
     ...overrides,
   }) as Book;
+
+const makeAppService = (overrides: Partial<AppService> = {}): AppService =>
+  ({
+    exists: vi.fn(async () => false),
+    readFile: vi.fn(async () => '{}'),
+    writeFile: vi.fn(async () => {}),
+    createDir: vi.fn(async () => {}),
+    deleteFile: vi.fn(async () => {}),
+    deleteBook: vi.fn(async () => {}),
+    loadBookConfig: vi.fn(async () => ({ updatedAt: 1, booknotes: [] })),
+    ...overrides,
+  }) as unknown as AppService;
 
 describe('CWA URL helpers', () => {
   it('uses blank public defaults', () => {
@@ -135,7 +155,7 @@ describe('syncCWASubscriptions', () => {
       },
     );
 
-    await syncCWASubscriptions({} as AppService, makeSettings(), []);
+    await syncCWASubscriptions(makeAppService(), makeSettings(), []);
 
     const [catalogs, , , options] = syncSubscribedCatalogs.mock.calls[0]!;
     expect(catalogs).toHaveLength(1);
@@ -147,8 +167,63 @@ describe('syncCWASubscriptions', () => {
       subscriptionId: 'new',
       subscriptionName: 'New',
       catalogId: 'cwa-sub-new',
+      entryId: '1',
       sourceUrl: 'https://cwa.example/books/get/1.epub',
     });
+  });
+
+  it('skips server-read and locally finished CWA items', async () => {
+    syncSubscribedCatalogs.mockResolvedValueOnce({ newBooks: [], totalNewBooks: 0, errors: [] });
+    const finished = makeBook({
+      readingStatus: 'finished',
+      cwaSource: {
+        subscriptionId: 'new',
+        subscriptionName: 'New',
+        catalogId: 'cwa-sub-new',
+        entryId: 'finished-entry',
+        sourceUrl: 'https://cwa.example/books/get/finished.epub',
+        downloadedAt: 1,
+      },
+    });
+    const appService = makeAppService();
+
+    await syncCWASubscriptions(appService, makeSettings(), [finished]);
+
+    const [, , , options] = syncSubscribedCatalogs.mock.calls[0]!;
+    await expect(
+      Promise.resolve(
+        options.shouldSkipItem({
+          item: {
+            entryId: 'server-read',
+            title: 'Read',
+            acquisitionHref: '/get/read.epub',
+            mimeType: 'application/epub+zip',
+            baseURL: 'https://cwa.example/books/opds/new',
+            serverReadStatus: 'read',
+          },
+          catalogId: 'cwa-sub-new',
+          catalogName: 'New',
+          sourceUrl: 'https://cwa.example/books/get/read.epub',
+        }),
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      Promise.resolve(
+        options.shouldSkipItem({
+        item: {
+          entryId: 'finished-entry',
+          title: 'Finished',
+          acquisitionHref: '/get/finished.epub',
+          mimeType: 'application/epub+zip',
+          baseURL: 'https://cwa.example/books/opds/new',
+          serverReadStatus: 'unknown',
+        },
+        catalogId: 'cwa-sub-new',
+        catalogName: 'New',
+          sourceUrl: 'https://cwa.example/books/get/finished.epub',
+        }),
+      ),
+    ).resolves.toBe(true);
   });
 });
 
@@ -219,10 +294,10 @@ describe('cleanupFinishedCWABooks', () => {
       cwaSource: finished.cwaSource,
     });
     const deleteBook = vi.fn(async () => {});
-    const appService = {
+    const appService = makeAppService({
       deleteBook,
-      loadBookConfig: vi.fn(async () => ({ booknotes: [] })),
-    } as unknown as AppService;
+      loadBookConfig: vi.fn(async () => ({ updatedAt: 1, booknotes: [] })),
+    });
     const settings = makeSettings({
       cwa: {
         ...makeSettings().cwa,
@@ -249,10 +324,15 @@ describe('cleanupFinishedCWABooks', () => {
         downloadedAt: 1,
       },
     });
-    const appService = {
+    const appService = makeAppService({
       deleteBook: vi.fn(async () => {}),
-      loadBookConfig: vi.fn(async () => ({ booknotes: [{ id: 'n1' }] })),
-    } as unknown as AppService;
+      loadBookConfig: vi.fn(async () => ({
+        updatedAt: 1,
+        booknotes: [
+          { id: 'n1', type: 'bookmark' as const, cfi: '/2', note: '', createdAt: 1, updatedAt: 1 },
+        ],
+      })),
+    });
     const settings = makeSettings({
       cwa: {
         ...makeSettings().cwa,
@@ -264,5 +344,42 @@ describe('cleanupFinishedCWABooks', () => {
 
     expect(cleaned).toEqual([]);
     expect(appService.deleteBook).not.toHaveBeenCalled();
+  });
+});
+
+describe('CWA read suppression state', () => {
+  it('records finished CWA books for future suppression', async () => {
+    const appService = makeAppService();
+    const book = makeBook({
+      readingStatus: 'finished',
+      readingStatusUpdatedAt: 123,
+      cwaSource: {
+        subscriptionId: 'new',
+        subscriptionName: 'New',
+        catalogId: 'cwa-sub-new',
+        entryId: 'entry-1',
+        sourceUrl: 'https://cwa.example/books/get/1.epub',
+        downloadedAt: 1,
+      },
+    });
+
+    const recorded = await recordFinishedCWAReadSuppressions(appService, [book]);
+
+    expect(recorded).toHaveLength(1);
+    expect(appService.writeFile).toHaveBeenCalledWith(
+      'CWA/read-suppression.json',
+      'Data',
+      expect.stringContaining('"entryId": "entry-1"'),
+    );
+  });
+
+  it('resets only CWA subscription and read suppression state', async () => {
+    const appService = makeAppService();
+
+    await resetCWASyncHistory(appService, makeSettings());
+
+    expect(deleteSubscriptionState).toHaveBeenCalledWith(appService, 'cwa-sub-new');
+    expect(deleteSubscriptionState).toHaveBeenCalledWith(appService, 'cwa-sub-disabled');
+    expect(appService.deleteFile).toHaveBeenCalledWith('CWA/read-suppression.json', 'Data');
   });
 });
