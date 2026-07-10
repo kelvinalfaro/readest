@@ -5,5 +5,12 @@ export {
   saveSubscriptionState,
   deleteSubscriptionState,
 } from './subscriptionState';
-export type { PendingItem, OPDSSubscriptionState, FailedEntry, SyncResult } from './types';
+export type {
+  PendingItem,
+  OPDSSubscriptionState,
+  FailedEntry,
+  SyncResult,
+  OPDSCatalogSyncStats,
+  OPDSSyncOptions,
+} from './types';
 export { isRetryEligible } from './types';

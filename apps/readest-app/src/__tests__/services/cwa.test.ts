@@ -4,6 +4,8 @@ import type { AppService } from '@/types/system';
 import type { SystemSettings } from '@/types/settings';
 import {
   cleanupFinishedCWABooks,
+  CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
+  CWA_DEFAULT_QUEUE_TARGET,
   CWA_DEFAULT_SUBSCRIPTION_LIMIT,
   CWA_DOWNLOAD_CONCURRENCY,
   CWA_DOWNLOAD_DELAY_MS,
@@ -14,6 +16,7 @@ import {
   hasEnabledCWASubscriptions,
   normalizeCWABaseUrl,
   recordFinishedCWAReadSuppressions,
+  retryFailedCWASubscription,
   resetCWASyncHistory,
   syncCWASubscriptions,
 } from '@/services/cwa';
@@ -21,6 +24,8 @@ import {
 const syncSubscribedCatalogs = vi.hoisted(() => vi.fn());
 const fetchWithAuth = vi.hoisted(() => vi.fn());
 const deleteSubscriptionState = vi.hoisted(() => vi.fn());
+const loadSubscriptionState = vi.hoisted(() => vi.fn());
+const saveSubscriptionState = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/opds', () => ({
   syncSubscribedCatalogs,
@@ -28,6 +33,8 @@ vi.mock('@/services/opds', () => ({
 
 vi.mock('@/services/opds/subscriptionState', () => ({
   deleteSubscriptionState,
+  loadSubscriptionState,
+  saveSubscriptionState,
 }));
 
 vi.mock('@/app/opds/utils/opdsReq', () => ({
@@ -40,8 +47,11 @@ vi.mock('@/services/environment', () => ({
 
 beforeEach(() => {
   syncSubscribedCatalogs.mockReset();
+  syncSubscribedCatalogs.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
   fetchWithAuth.mockReset();
   deleteSubscriptionState.mockReset();
+  loadSubscriptionState.mockReset();
+  saveSubscriptionState.mockReset();
 });
 
 const makeSettings = (overrides: Partial<SystemSettings> = {}): SystemSettings =>
@@ -130,7 +140,7 @@ describe('syncCWASubscriptions', () => {
       [],
     );
 
-    expect(result).toEqual({ newBooks: [], totalNewBooks: 0, errors: [] });
+    expect(result).toMatchObject({ newBooks: [], totalNewBooks: 0, errors: [] });
     expect(syncSubscribedCatalogs).not.toHaveBeenCalled();
   });
 
@@ -160,7 +170,9 @@ describe('syncCWASubscriptions', () => {
     const [catalogs, , , options] = syncSubscribedCatalogs.mock.calls[0]!;
     expect(catalogs).toHaveLength(1);
     expect(catalogs[0].url).toBe('https://cwa.example/books/opds/new');
-    expect(options.limitByCatalogId).toEqual({ 'cwa-sub-new': CWA_DEFAULT_SUBSCRIPTION_LIMIT });
+    expect(options.limitByCatalogId).toEqual({
+      'cwa-sub-new': CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
+    });
     expect(options.downloadConcurrency).toBe(CWA_DOWNLOAD_CONCURRENCY);
     expect(options.delayBetweenDownloadsMs).toBe(CWA_DOWNLOAD_DELAY_MS);
     expect(imported.cwaSource).toMatchObject({
@@ -169,6 +181,176 @@ describe('syncCWASubscriptions', () => {
       catalogId: 'cwa-sub-new',
       entryId: '1',
       sourceUrl: 'https://cwa.example/books/get/1.epub',
+    });
+  });
+
+  it('migrates the legacy limit to a queue target with a patient per-sync cap', () => {
+    const settings = getCWASettings(makeSettings());
+
+    expect(settings.subscriptions[0]).toMatchObject({
+      limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+      queueTarget: CWA_DEFAULT_QUEUE_TARGET,
+      maxDownloadsPerSync: CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
+    });
+  });
+
+  it('does not contact a shelf when its local queue is full', async () => {
+    const ready = Array.from({ length: CWA_DEFAULT_QUEUE_TARGET }, (_, index) =>
+      makeBook({
+        hash: `ready-${index}`,
+        readingStatus: 'unread',
+        cwaSource: {
+          subscriptionId: 'new',
+          subscriptionName: 'New',
+          catalogId: 'cwa-sub-new',
+          entryId: `entry-${index}`,
+          sourceUrl: `https://cwa.example/books/get/${index}.epub`,
+          downloadedAt: 1,
+        },
+      }),
+    );
+    const appService = makeAppService({ isBookAvailable: vi.fn(async () => true) });
+
+    const result = await syncCWASubscriptions(appService, makeSettings(), ready);
+
+    expect(syncSubscribedCatalogs).toHaveBeenCalledWith([], appService, ready, expect.any(Object));
+    expect(result.report?.subscriptions[0]).toMatchObject({
+      readyBefore: CWA_DEFAULT_QUEUE_TARGET,
+      deficit: 0,
+      planned: 0,
+    });
+  });
+
+  it('limits replenishment to the queue deficit', async () => {
+    syncSubscribedCatalogs.mockResolvedValueOnce({ newBooks: [], totalNewBooks: 0, errors: [] });
+    const ready = Array.from({ length: CWA_DEFAULT_QUEUE_TARGET - 2 }, (_, index) =>
+      makeBook({
+        hash: `ready-${index}`,
+        readingStatus: 'reading',
+        cwaSource: {
+          subscriptionId: 'new',
+          subscriptionName: 'New',
+          catalogId: 'cwa-sub-new',
+          entryId: `entry-${index}`,
+          sourceUrl: `https://cwa.example/books/get/${index}.epub`,
+          downloadedAt: 1,
+        },
+      }),
+    );
+
+    await syncCWASubscriptions(
+      makeAppService({ isBookAvailable: vi.fn(async () => true) }),
+      makeSettings(),
+      ready,
+    );
+
+    expect(syncSubscribedCatalogs.mock.calls[0]![3].limitByCatalogId).toEqual({
+      'cwa-sub-new': 2,
+    });
+  });
+
+  it('passes dry-run through without cleanup and records a preview report', async () => {
+    syncSubscribedCatalogs.mockImplementationOnce(async (_catalogs, _service, _books, options) => {
+      expect(options.dryRun).toBe(true);
+      return { newBooks: [], totalNewBooks: 0, errors: [] };
+    });
+    const appService = makeAppService();
+
+    const result = await syncCWASubscriptions(appService, makeSettings(), [], {
+      trigger: 'preview',
+      dryRun: true,
+    });
+
+    expect(result.report?.status).toBe('preview');
+    expect(appService.deleteBook).not.toHaveBeenCalled();
+  });
+
+  it('keeps all CWA shelf memberships when an existing book is imported again', async () => {
+    const imported = makeBook({
+      hash: 'shared',
+      cwaSource: {
+        subscriptionId: 'older',
+        subscriptionName: 'Older',
+        catalogId: 'cwa-sub-older',
+        entryId: 'old-entry',
+        sourceUrl: 'https://cwa.example/books/get/shared.epub',
+        downloadedAt: 1,
+      },
+    });
+    syncSubscribedCatalogs.mockImplementationOnce(
+      async (_catalogs, _appService, _books, options) => {
+        await options.onBookImported({
+          book: imported,
+          catalogId: 'cwa-sub-new',
+          catalogName: 'New',
+          sourceUrl: 'https://cwa.example/books/get/shared.epub',
+          item: {
+            entryId: 'new-entry',
+            title: 'Shared',
+            acquisitionHref: '/get/shared.epub',
+            mimeType: 'application/epub+zip',
+            baseURL: 'https://cwa.example/books/opds/new',
+          },
+        });
+        return { newBooks: [imported], totalNewBooks: 1, errors: [] };
+      },
+    );
+
+    await syncCWASubscriptions(makeAppService(), makeSettings(), []);
+
+    expect(imported.cwaSource?.sources?.map((source) => source.subscriptionId)).toEqual([
+      'older',
+      'new',
+    ]);
+  });
+
+  it('retries only failed entries even when the shelf queue is full', async () => {
+    loadSubscriptionState.mockResolvedValueOnce({
+      catalogId: 'cwa-sub-new',
+      lastCheckedAt: 1,
+      knownEntryIds: ['failed-entry'],
+      failedEntries: [
+        {
+          entryId: 'failed-entry',
+          href: '/get/failed.epub',
+          title: 'Failed',
+          attempts: 3,
+          lastAttemptAt: 1,
+        },
+      ],
+    });
+    const ready = Array.from({ length: CWA_DEFAULT_QUEUE_TARGET }, (_, index) =>
+      makeBook({
+        hash: `ready-${index}`,
+        readingStatus: 'unread',
+        cwaSource: {
+          subscriptionId: 'new',
+          subscriptionName: 'New',
+          catalogId: 'cwa-sub-new',
+          entryId: `ready-entry-${index}`,
+          sourceUrl: `https://cwa.example/books/get/${index}.epub`,
+          downloadedAt: 1,
+        },
+      }),
+    );
+
+    await retryFailedCWASubscription(
+      makeAppService({ isBookAvailable: vi.fn(async () => true) }),
+      makeSettings(),
+      ready,
+      'new',
+    );
+
+    expect(saveSubscriptionState).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        knownEntryIds: [],
+        failedEntries: [expect.objectContaining({ attempts: 0, lastAttemptAt: 0 })],
+      }),
+    );
+    expect(syncSubscribedCatalogs.mock.calls[0]![3]).toMatchObject({
+      limitByCatalogId: { 'cwa-sub-new': 1 },
+      onlyEntryIdsByCatalogId: { 'cwa-sub-new': ['failed-entry'] },
     });
   });
 
@@ -210,16 +392,16 @@ describe('syncCWASubscriptions', () => {
     await expect(
       Promise.resolve(
         options.shouldSkipItem({
-        item: {
-          entryId: 'finished-entry',
-          title: 'Finished',
-          acquisitionHref: '/get/finished.epub',
-          mimeType: 'application/epub+zip',
-          baseURL: 'https://cwa.example/books/opds/new',
-          serverReadStatus: 'unknown',
-        },
-        catalogId: 'cwa-sub-new',
-        catalogName: 'New',
+          item: {
+            entryId: 'finished-entry',
+            title: 'Finished',
+            acquisitionHref: '/get/finished.epub',
+            mimeType: 'application/epub+zip',
+            baseURL: 'https://cwa.example/books/opds/new',
+            serverReadStatus: 'unknown',
+          },
+          catalogId: 'cwa-sub-new',
+          catalogName: 'New',
           sourceUrl: 'https://cwa.example/books/get/finished.epub',
         }),
       ),
@@ -381,5 +563,6 @@ describe('CWA read suppression state', () => {
     expect(deleteSubscriptionState).toHaveBeenCalledWith(appService, 'cwa-sub-new');
     expect(deleteSubscriptionState).toHaveBeenCalledWith(appService, 'cwa-sub-disabled');
     expect(appService.deleteFile).toHaveBeenCalledWith('CWA/read-suppression.json', 'Data');
+    expect(appService.deleteFile).toHaveBeenCalledWith('CWA/sync-status.json', 'Data');
   });
 });

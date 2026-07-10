@@ -50,10 +50,26 @@ export interface SyncResult {
   errors: Array<{ catalogId: string; catalogName: string; error: string }>;
 }
 
+export interface OPDSCatalogSyncStats {
+  catalogId: string;
+  catalogName: string;
+  discovered: number;
+  deferredByBackoff: number;
+  filtered: number;
+  planned: number;
+  attempted: number;
+  downloaded: number;
+  failed: number;
+  nextRetryAt?: number;
+  error?: string;
+}
+
 export interface OPDSSyncOptions {
   limitByCatalogId?: Record<string, number>;
+  onlyEntryIdsByCatalogId?: Record<string, string[]>;
   downloadConcurrency?: number;
   delayBetweenDownloadsMs?: number;
+  dryRun?: boolean;
   shouldSkipItem?: (input: {
     item: PendingItem;
     catalogId: string;
@@ -67,6 +83,7 @@ export interface OPDSSyncOptions {
     sourceUrl: string;
     item: PendingItem;
   }) => void | Promise<void>;
+  onCatalogComplete?: (stats: OPDSCatalogSyncStats) => void | Promise<void>;
 }
 
 // --- Helpers ---
@@ -75,4 +92,11 @@ export function isRetryEligible(entry: FailedEntry): boolean {
   if (entry.attempts >= MAX_RETRY_ATTEMPTS) return false;
   const backoff = RETRY_BACKOFF_MS * Math.pow(2, entry.attempts);
   return Date.now() - entry.lastAttemptAt >= backoff;
+}
+
+export function getNextRetryAt(entries: FailedEntry[]): number | undefined {
+  const retryTimes = entries
+    .filter((entry) => entry.attempts < MAX_RETRY_ATTEMPTS)
+    .map((entry) => entry.lastAttemptAt + RETRY_BACKOFF_MS * Math.pow(2, entry.attempts));
+  return retryTimes.length > 0 ? Math.min(...retryTimes) : undefined;
 }

@@ -5,18 +5,17 @@ import { useEnv } from '@/context/EnvContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
-import { useCustomOPDSStore } from '@/store/customOPDSStore';
 import { eventDispatcher } from '@/utils/event';
 import {
-  buildCWACatalog,
-  cleanupFinishedCWABooks,
-  CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+  CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
+  CWA_DEFAULT_QUEUE_TARGET,
   discoverCWAShelves,
   getCWAKOSyncUrl,
   getCWAOPDSUrl,
   getCWASettings,
   normalizeCWABaseUrl,
   resetCWASyncHistory,
+  resetCWASubscriptionHistory,
   resolveCWAUrl,
   syncCWASubscriptions,
 } from '@/services/cwa';
@@ -74,13 +73,7 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
 
   const ensureCatalogAndOpen = async () => {
     await persistConnection();
-    const latest = getCWASettings(useSettingsStore.getState().settings);
-    const catalog = buildCWACatalog(latest);
-    await useCustomOPDSStore.getState().loadCustomOPDSCatalogs(envConfig);
-    const saved = useCustomOPDSStore.getState().addCatalog(catalog);
-    await useCustomOPDSStore.getState().saveCustomOPDSCatalogs(envConfig);
-    const url = `/opds?id=${encodeURIComponent(saved.id)}&url=${encodeURIComponent(saved.url)}`;
-    router.push(url);
+    router.push('/cwa');
   };
 
   const updateSubscription = async (id: string, patch: Partial<CWASubscription>) => {
@@ -99,7 +92,8 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       name: newSubName.trim(),
       url: newSubUrl.trim(),
       enabled: true,
-      limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+      queueTarget: CWA_DEFAULT_QUEUE_TARGET,
+      maxDownloadsPerSync: CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
       formatPreference: ['epub', 'kepub', 'pdf'],
       cleanupPolicy: 'never',
       excludeServerRead: true,
@@ -164,7 +158,8 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       name: shelf.name,
       url: shelf.url,
       enabled: true,
-      limit: CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+      queueTarget: CWA_DEFAULT_QUEUE_TARGET,
+      maxDownloadsPerSync: CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
       formatPreference: ['epub', 'kepub', 'pdf'],
       cleanupPolicy: 'never',
       excludeServerRead: true,
@@ -187,11 +182,12 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
         username,
         password,
       });
-      const result = await syncCWASubscriptions(appService, nextSettings, library);
+      const result = await syncCWASubscriptions(appService, nextSettings, library, {
+        trigger: 'manual',
+      });
       const merged = Array.from(
         new Map([...library, ...result.newBooks].map((book) => [book.hash, book])).values(),
       );
-      const cleaned = await cleanupFinishedCWABooks(appService, nextSettings, merged);
       setLibrary(merged);
       await appService.saveLibraryBooks(merged);
       await persistCWA({ lastSyncedAt: Date.now() });
@@ -202,12 +198,12 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
           ? _('CWA synced with {{count}} catalog error(s)', { count: result.errors.length })
           : _('CWA sync complete: {{count}} new item(s)', { count: result.totalNewBooks }),
       });
-      if (cleaned.length > 0) {
+      if (result.cleanedBooks.length > 0) {
         eventDispatcher.dispatch('toast', {
           type: 'info',
           timeout: 2500,
           message: _('Removed {{count}} finished CWA local copy/copies', {
-            count: cleaned.length,
+            count: result.cleanedBooks.length,
           }),
         });
       }
@@ -229,6 +225,16 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       type: 'info',
       timeout: 2500,
       message: _('CWA sync history reset'),
+    });
+  };
+
+  const handleResetSubscriptionHistory = async (subscriptionId: string) => {
+    if (!appService) return;
+    await resetCWASubscriptionHistory(appService, subscriptionId);
+    eventDispatcher.dispatch('toast', {
+      type: 'info',
+      timeout: 2000,
+      message: _('Shelf sync history reset'),
     });
   };
 
@@ -282,8 +288,12 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
             </div>
           </div>
           <div className='text-base-content/70 text-sm'>
-            <div>{_('OPDS')}: {getCWAOPDSUrl({ serverUrl }) || _('Enter a server URL')}</div>
-            <div>{_('KOSync')}: {getCWAKOSyncUrl({ serverUrl }) || _('Enter a server URL')}</div>
+            <div>
+              {_('OPDS')}: {getCWAOPDSUrl({ serverUrl }) || _('Enter a server URL')}
+            </div>
+            <div>
+              {_('KOSync')}: {getCWAKOSyncUrl({ serverUrl }) || _('Enter a server URL')}
+            </div>
           </div>
           <div className='flex flex-wrap gap-2'>
             <button
@@ -406,16 +416,32 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
                 </button>
                 <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                   <label className='form-control'>
-                    <span className='label-text'>{_('Download limit')}</span>
+                    <span className='label-text'>{_('Keep unread on device')}</span>
                     <input
                       type='number'
                       min={1}
-                      max={500}
+                      max={50}
                       className='input input-bordered input-sm'
-                      value={sub.limit}
+                      value={sub.queueTarget ?? CWA_DEFAULT_QUEUE_TARGET}
                       onChange={(e) =>
                         updateSubscription(sub.id, {
-                          limit: Number(e.target.value) || CWA_DEFAULT_SUBSCRIPTION_LIMIT,
+                          queueTarget: Number(e.target.value) || CWA_DEFAULT_QUEUE_TARGET,
+                        })
+                      }
+                    />
+                  </label>
+                  <label className='form-control'>
+                    <span className='label-text'>{_('Maximum downloads per sync')}</span>
+                    <input
+                      type='number'
+                      min={1}
+                      max={10}
+                      className='input input-bordered input-sm'
+                      value={sub.maxDownloadsPerSync ?? CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC}
+                      onChange={(e) =>
+                        updateSubscription(sub.id, {
+                          maxDownloadsPerSync:
+                            Number(e.target.value) || CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
                         })
                       }
                     />
@@ -448,6 +474,13 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
                       {_('Exclude books marked read on the server')}
                     </span>
                   </label>
+                  <button
+                    type='button'
+                    className='btn btn-ghost btn-xs justify-self-start'
+                    onClick={() => handleResetSubscriptionHistory(sub.id)}
+                  >
+                    {_('Reset shelf sync history')}
+                  </button>
                 </div>
               </div>
             ))}

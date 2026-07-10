@@ -44,7 +44,6 @@ import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
-import { useCustomOPDSStore } from '@/store/customOPDSStore';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { usePullToRefresh } from '@/hooks/usePullToRefresh';
 import { useTheme } from '@/hooks/useTheme';
@@ -120,14 +119,14 @@ import { useCustomFonts } from '@/hooks/useCustomFonts';
 import DropIndicator from '@/components/DropIndicator';
 import SettingsDialog from '@/components/settings/SettingsDialog';
 import {
-  buildCWACatalog,
-  cleanupFinishedCWABooks,
   getCWASettings,
   hasEnabledCWASubscriptions,
+  shouldRunCWAAutoSync,
   syncCWASubscriptions,
 } from '@/services/cwa';
 import ModalPortal from '@/components/ModalPortal';
 import TransferQueuePanel from './components/TransferQueuePanel';
+import CWAStatusBar from './components/CWAStatusBar';
 
 /** Skip tiny non-book artifacts during folder auto-scan (matches the manual import dialog default). */
 const AUTO_IMPORT_MIN_SIZE_BYTES = 20 * 1024;
@@ -315,55 +314,54 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   useInboxDrainer();
   const { isDragging } = useDragDropImport();
 
-  const syncCWALibrary = useCallback(async () => {
-    if (!appService) return;
-    const { settings: latestSettings } = useSettingsStore.getState();
-    if (!hasEnabledCWASubscriptions(latestSettings)) return;
+  const syncCWALibrary = useCallback(
+    async (trigger: 'manual' | 'pull' | 'startup' = 'manual') => {
+      if (!appService) return;
+      const { settings: latestSettings } = useSettingsStore.getState();
+      if (!hasEnabledCWASubscriptions(latestSettings)) return;
 
-    eventDispatcher.dispatch('toast', {
-      type: 'info',
-      timeout: 1800,
-      message: _('CWA sync started'),
-    });
+      if (trigger !== 'startup') {
+        eventDispatcher.dispatch('toast', {
+          type: 'info',
+          timeout: 1800,
+          message: _('CWA sync started'),
+        });
+      }
 
-    const currentLibrary = useLibraryStore.getState().library;
-    const result = await syncCWASubscriptions(appService, latestSettings, currentLibrary);
-    const merged = Array.from(
-      new Map([...currentLibrary, ...result.newBooks].map((book) => [book.hash, book])).values(),
-    );
-    const cleaned = await cleanupFinishedCWABooks(appService, latestSettings, merged);
-    setLibrary(merged);
-    await appService.saveLibraryBooks(merged);
-    const nextSettings = {
-      ...latestSettings,
-      cwa: { ...getCWASettings(latestSettings), lastSyncedAt: Date.now() },
-    };
-    useSettingsStore.getState().setSettings(nextSettings);
-    await useSettingsStore.getState().saveSettings(envConfig, nextSettings);
-
-    eventDispatcher.dispatch('toast', {
-      type: result.errors.length ? 'warning' : 'info',
-      timeout: 2500,
-      message: result.errors.length
-        ? _('CWA synced with {{count}} catalog error(s)', { count: result.errors.length })
-        : _('CWA sync complete: {{count}} new item(s)', { count: result.totalNewBooks }),
-    });
-    if (cleaned.length > 0) {
-      eventDispatcher.dispatch('toast', {
-        type: 'info',
-        timeout: 2500,
-        message: _('Removed {{count}} finished CWA local copy/copies', {
-          count: cleaned.length,
-        }),
+      const currentLibrary = useLibraryStore.getState().library;
+      const result = await syncCWASubscriptions(appService, latestSettings, currentLibrary, {
+        trigger,
       });
-    }
-  }, [_, appService, envConfig, setLibrary]);
+      const merged = Array.from(
+        new Map([...currentLibrary, ...result.newBooks].map((book) => [book.hash, book])).values(),
+      );
+      setLibrary(merged);
+      await appService.saveLibraryBooks(merged);
+      const nextSettings = {
+        ...latestSettings,
+        cwa: { ...getCWASettings(latestSettings), lastSyncedAt: Date.now() },
+      };
+      useSettingsStore.getState().setSettings(nextSettings);
+      await useSettingsStore.getState().saveSettings(envConfig, nextSettings);
+
+      if (trigger !== 'startup' || result.errors.length > 0) {
+        eventDispatcher.dispatch('toast', {
+          type: result.errors.length ? 'warning' : 'info',
+          timeout: 2500,
+          message: result.errors.length
+            ? _('CWA synced with {{count}} catalog error(s)', { count: result.errors.length })
+            : _('CWA sync complete: {{count}} new item(s)', { count: result.totalNewBooks }),
+        });
+      }
+    },
+    [_, appService, envConfig, setLibrary],
+  );
 
   const handlePullToRefreshSync = useCallback(
     async (full: boolean) => {
       const latestSettings = useSettingsStore.getState().settings;
       if (hasEnabledCWASubscriptions(latestSettings)) {
-        await syncCWALibrary();
+        await syncCWALibrary('pull');
         return;
       }
 
@@ -382,6 +380,18 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     async () => handlePullToRefreshSync(false),
     async () => handlePullToRefreshSync(true),
   );
+
+  useEffect(() => {
+    if (!libraryLoaded || !appService) return;
+    if (!hasEnabledCWASubscriptions(useSettingsStore.getState().settings)) return;
+    let cancelled = false;
+    void shouldRunCWAAutoSync(appService).then((shouldRun) => {
+      if (!cancelled && shouldRun) void syncCWALibrary('startup');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [appService, libraryLoaded, syncCWALibrary]);
   useScreenWakeLock(settings.screenWakeLock);
 
   useShortcuts({
@@ -622,12 +632,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   };
 
   const handleOpenCWALibrary = async () => {
-    const cwa = getCWASettings(useSettingsStore.getState().settings);
-    const catalog = buildCWACatalog(cwa);
-    await useCustomOPDSStore.getState().loadCustomOPDSCatalogs(envConfig);
-    const saved = useCustomOPDSStore.getState().addCatalog(catalog);
-    await useCustomOPDSStore.getState().saveCustomOPDSCatalogs(envConfig);
-    router.push(`/opds?id=${encodeURIComponent(saved.id)}&url=${encodeURIComponent(saved.url)}`);
+    router.push('/cwa');
   };
 
   const handleDismissOPDSDialog = () => {
@@ -1745,6 +1750,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           groupName={currentSeriesAuthorGroup.groupName}
         />
       )}
+      <CWAStatusBar />
       {showBookshelf &&
         (libraryBooks.some((book) => !book.deletedAt) ? (
           <div aria-label={_('Your Bookshelf')} className='flex min-h-0 flex-grow flex-col'>

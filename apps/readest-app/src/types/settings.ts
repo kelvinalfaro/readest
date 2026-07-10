@@ -91,7 +91,10 @@ export interface CWASubscription {
   name: string;
   url: string;
   enabled: boolean;
-  limit: number;
+  /** @deprecated Legacy batch limit, migrated to queueTarget when read. */
+  limit?: number;
+  queueTarget?: number;
+  maxDownloadsPerSync?: number;
   formatPreference: CWAFormatPreference[];
   cleanupPolicy: CWACleanupPolicy;
   excludeServerRead?: boolean;

@@ -16,10 +16,6 @@ on:
         description: 'Release title. Leave blank to use Readest CWA Android v<version>.'
         required: false
         type: string
-  push:
-    branches:
-      - agent/cwa-kosync-fallback
-
 permissions:
   contents: write
 

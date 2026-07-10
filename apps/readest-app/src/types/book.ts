@@ -122,16 +122,21 @@ export interface Book {
   readingStatus?: ReadingStatus;
   readingStatusUpdatedAt?: number; // ms; bumped only when readingStatus changes
   primaryLanguage?: string;
-  cwaSource?: {
-    subscriptionId: string;
-    subscriptionName: string;
-    catalogId: string;
-    entryId?: string;
-    sourceUrl: string;
-    downloadedAt: number;
+  cwaSource?: CWABookSourceRef & {
+    /** All known shelf memberships, including the primary legacy fields above. */
+    sources?: CWABookSourceRef[];
   };
 
   metadata?: BookMetadata;
+}
+
+export interface CWABookSourceRef {
+  subscriptionId: string;
+  subscriptionName: string;
+  catalogId: string;
+  entryId?: string;
+  sourceUrl: string;
+  downloadedAt: number;
 }
 
 export interface BookGroupType {
