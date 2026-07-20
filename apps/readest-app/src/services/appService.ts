@@ -34,6 +34,11 @@ import * as FontSvc from './fontService';
 import * as ImageSvc from './imageService';
 import * as LibrarySvc from './libraryService';
 import * as Settings from './settingsService';
+import {
+  loadFeeds as loadFeedsFromDisk,
+  saveFeeds as saveFeedsToDisk,
+} from '@/services/rss/feedPersistence';
+import type { RssFeed } from '@/types/rss';
 
 export abstract class BaseAppService implements AppService {
   osPlatform: OsPlatform = getOSPlatform();
@@ -124,15 +129,17 @@ export abstract class BaseAppService implements AppService {
   }
 
   /**
-   * Users with WebDAV/Drive already enabled become "third-party selected"
-   * when cloud sync provider selection ships, gating native Readest Cloud
-   * uploads off; flip the selected provider's syncBooks on once so their
-   * books keep backing up somewhere. Mutates the caller's settings
-   * snapshot, which the caller persists together with migrationVersion.
+   * Users with WebDAV/Drive already enabled had native Readest Cloud uploads
+   * gated off when cloud sync provider selection shipped; flip syncBooks on
+   * once for every enabled third-party backend so their books keep backing up
+   * somewhere. This force-enables syncBooks a single time even for a user who
+   * had explicitly turned it off — intentional, since the alternative is books
+   * backing up nowhere. Mutates the caller's settings snapshot, which the
+   * caller persists together with migrationVersion.
    */
   private migrate20260706(settings: SystemSettings): void {
     if (applySyncBooksAutoEnable(settings)) {
-      console.log('Migration 20260706: enabled syncBooks for the selected cloud sync provider.');
+      console.log('Migration 20260706: enabled syncBooks for enabled cloud sync backends.');
     }
   }
 
@@ -462,6 +469,14 @@ export abstract class BaseAppService implements AppService {
 
   async saveBookNav(book: Book, nav: BookNav) {
     return BookSvc.saveBookNav(this.fs, book, nav);
+  }
+
+  async loadFeeds(): Promise<RssFeed[]> {
+    return loadFeedsFromDisk(this.fs);
+  }
+
+  async saveFeeds(feeds: RssFeed[]): Promise<void> {
+    return saveFeedsToDisk(this.fs, feeds);
   }
 
   async loadLibraryBooks(): Promise<Book[]> {

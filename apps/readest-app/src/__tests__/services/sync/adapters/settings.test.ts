@@ -136,6 +136,8 @@ describe('settingsAdapter', () => {
       'hardcover.accessToken',
       'webdav.username',
       'webdav.password',
+      's3.accessKeyId',
+      's3.secretAccessKey',
     ]);
   });
 
@@ -146,6 +148,12 @@ describe('settingsAdapter', () => {
   test('webdav.serverUrl and webdav.rootPath are plaintext (not in encryptedFields)', () => {
     expect(settingsAdapter.encryptedFields).not.toContain('webdav.serverUrl');
     expect(settingsAdapter.encryptedFields).not.toContain('webdav.rootPath');
+  });
+
+  test('s3.endpoint / region / bucket are plaintext (not in encryptedFields)', () => {
+    expect(settingsAdapter.encryptedFields).not.toContain('s3.endpoint');
+    expect(settingsAdapter.encryptedFields).not.toContain('s3.region');
+    expect(settingsAdapter.encryptedFields).not.toContain('s3.bucket');
   });
 
   test('unpackRow reconstructs the patch from CRDT envelopes', () => {
@@ -185,6 +193,17 @@ describe('SETTINGS_WHITELIST', () => {
     expect(SETTINGS_WHITELIST).toContain('dictionarySettings.webSearches');
     // Dictionary popup font size (#4443) follows the user across devices.
     expect(SETTINGS_WHITELIST).toContain('dictionarySettings.fontScale');
+  });
+
+  test('includes the S3 connection fields but not its per-device bookkeeping', () => {
+    expect(SETTINGS_WHITELIST).toContain('s3.endpoint');
+    expect(SETTINGS_WHITELIST).toContain('s3.region');
+    expect(SETTINGS_WHITELIST).toContain('s3.bucket');
+    expect(SETTINGS_WHITELIST).toContain('s3.accessKeyId');
+    expect(SETTINGS_WHITELIST).toContain('s3.secretAccessKey');
+    expect(SETTINGS_WHITELIST).not.toContain('s3.enabled');
+    expect(SETTINGS_WHITELIST).not.toContain('s3.deviceId');
+    expect(SETTINGS_WHITELIST).not.toContain('s3.providerSelectedAt');
   });
 
   test('does NOT sync dictionarySettings.defaultProviderId (per-device last-used tab)', () => {

@@ -304,7 +304,7 @@ const WordLensPanel: React.FC<WordLensPanelProps> = ({ bookKey, onBack }) => {
             type='button'
             onClick={handleDownload}
             disabled={downloading}
-            className='btn btn-primary btn-contrast btn-sm shrink-0'
+            className='btn btn-contrast btn-sm shrink-0'
           >
             {_('Download')}
           </button>
@@ -391,7 +391,6 @@ const WordLensPanel: React.FC<WordLensPanelProps> = ({ bookKey, onBack }) => {
               value={glossColor || DEFAULT_GLOSS_SWATCH}
               onChange={handleGlossColorChange}
               onCommit={handleGlossColorCommit}
-              swatchOnly
               showPickerIcon
               pickerPosition='right'
             />

@@ -93,4 +93,45 @@ describe('OPDS proxy SSRF guard', () => {
     const body = await res.text();
     expect(body).toContain('<feed');
   });
+
+  it('escapes stray ampersands in XML responses', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response('<feed><link href="BOOKS.zip&file=1"/></feed>', {
+        status: 200,
+        headers: { 'Content-Type': 'application/xml' },
+      }),
+    );
+    const res = await GET(proxyReq('https://feeds.example.com/catalog.atom'));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('BOOKS.zip&amp;file=1');
+  });
+
+  it('preserves non-utf8 XML bytes while escaping stray ampersands', async () => {
+    const latin1 = Buffer.from('<feed><title>José & María</title></feed>', 'latin1');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(latin1, {
+        status: 200,
+        headers: { 'Content-Type': 'application/xml; charset=iso-8859-1' },
+      }),
+    );
+
+    const res = await GET(proxyReq('https://feeds.example.com/catalog.atom'));
+    expect(res.status).toBe(200);
+    expect(Buffer.from(await res.arrayBuffer()).toString('latin1')).toContain('José &amp; María');
+  });
+
+  it('leaves ampersands inside CDATA unchanged', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response('<feed><content><![CDATA[Tom & Jerry]]></content></feed>', {
+        status: 200,
+        headers: { 'Content-Type': 'application/xml' },
+      }),
+    );
+
+    const res = await GET(proxyReq('https://feeds.example.com/catalog.atom'));
+    const body = await res.text();
+    expect(res.status).toBe(200);
+    expect(body).toContain('<![CDATA[Tom & Jerry]]>');
+    expect(body).not.toContain('<![CDATA[Tom &amp; Jerry]]>');
+  });
 });

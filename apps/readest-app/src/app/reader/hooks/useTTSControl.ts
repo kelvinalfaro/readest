@@ -15,12 +15,13 @@ import {
   TTSHighlightOptions,
   TTSVoicesGroup,
 } from '@/services/tts';
+import { DEFAULT_SENTENCE_GAP_SEC } from '@/services/tts/EdgeTTSClient';
+import { DEFAULT_PARAGRAPH_GAP_SEC } from '@/services/tts/TTSController';
 import { eventDispatcher } from '@/utils/event';
 import { genSSMLRaw, parseSSMLLang } from '@/utils/ssml';
 import { throttle } from '@/utils/throttle';
 import { isCfiInLocation } from '@/utils/cfi';
 import { getLocale } from '@/utils/misc';
-import { invokeUseBackgroundAudio } from '@/utils/bridge';
 import { estimateTTSTime } from '@/utils/ttsTime';
 import { releaseUnblockAudio, ttsMediaBridge, unblockAudio } from '@/services/tts/ttsMediaBridge';
 import { getBookHashFromKey, ttsSessionManager } from '@/services/tts/TTSSessionManager';
@@ -315,20 +316,29 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     };
 
     const handleHighlightMark = (e: Event) => {
-      const { cfi } = (e as CustomEvent<{ cfi: string }>).detail;
+      const { cfi, preview } = (e as CustomEvent<{ cfi: string; preview?: boolean }>).detail;
       const view = getView(bookKey);
       const progress = getProgress(bookKey);
       const viewSettings = getViewSettings(bookKey);
       const { location } = progress || {};
       if (!cfi || !view || !location || !viewSettings) return;
 
-      viewSettings.ttsLocation = cfi;
-      setViewSettings(bookKey, viewSettings);
+      // A scrubber-drag preview navigates the view but must not move the
+      // session's saved location — only a committed seek (which fires a
+      // non-preview mark) does that.
+      if (!preview) {
+        viewSettings.ttsLocation = cfi;
+        setViewSettings(bookKey, viewSettings);
+      }
 
       const hlContents = view.renderer.getContents();
       const hlPrimaryIdx = view.renderer.primaryIndex;
-      const { doc, index: viewSectionIndex } = (hlContents.find((x) => x.index === hlPrimaryIdx) ??
-        hlContents[0]) as {
+      // getContents() is empty when the mark fires mid-relocate (the section is
+      // still loading, or the view was torn down). Bail instead of destructuring
+      // `doc` off undefined (READEST-19).
+      const hlContent = hlContents.find((x) => x.index === hlPrimaryIdx) ?? hlContents[0];
+      if (!hlContent) return;
+      const { doc, index: viewSectionIndex } = hlContent as {
         doc: Document;
         index?: number;
       };
@@ -353,13 +363,19 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         return;
       }
 
-      if (!followingTTSLocationRef.current) return;
+      // A drag preview is an explicit "show me there" gesture: it navigates
+      // even when auto-follow was suppressed by the user paging away.
+      if (!preview && !followingTTSLocationRef.current) return;
 
       if (hlContents.some(({ doc }) => (doc.getSelection()?.toString().length ?? 0) > 0)) {
         return;
       }
 
       const range = anchor(doc);
+      // The cfi may not resolve to a range in this doc (stale/cross-realm doc,
+      // detached node). A null range would crash scrollToAnchor (foliate reads
+      // range.startContainer) or getBoundingClientRect below (READEST-21).
+      if (!range) return;
       if (!view.renderer.scrolled) {
         view.renderer.scrollToAnchor?.(range);
       } else {
@@ -659,9 +675,6 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
               .then(() => ttsController.shutdown())
               .catch((error) => console.warn('TTS shutdown failed:', error))
           : Promise.resolve(),
-        appService?.isIOSApp
-          ? invokeUseBackgroundAudio({ enabled: false }).catch(() => {})
-          : Promise.resolve(),
         Promise.resolve()
           .then(() => ttsMediaBridge.unbind())
           .catch(() => {}),
@@ -738,12 +751,17 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         // HTMLMediaElement is playing, and Edge playback no longer has one.
         unblockAudio();
         void ensureSharedAudioContext();
-        if (appService?.isIOSApp) {
-          await invokeUseBackgroundAudio({ enabled: true });
-        }
+        // No use_background_audio here: on iOS the native-tts media session
+        // claims the audio session itself on activation (non-mixable
+        // .playback/.spokenAudio). The old call set .mixWithOthers, which
+        // disqualifies the app from Now Playing and fought the claim.
         setTtsClientsInitialized(false);
 
+        // Show the mini player immediately, in the "playing" state: client
+        // init below can take a while and the session is conceptually already
+        // starting. The catch handler rolls both back if the start fails.
         setShowIndicator(true);
+        setIsPlaying(true);
         const ttsController = new TTSController(
           appService,
           view,
@@ -751,6 +769,10 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
           preprocessSSMLForTTS,
           handleSectionChange,
         );
+        // The constructor takes the view directly (attachView, which also binds
+        // this, only runs on the background-session reattach path), so set the
+        // book key here or the per-book audio cache never gets a hash to open.
+        ttsController.bookKey = bookKey;
         ttsControllerRef.current = ttsController;
         setTtsController(ttsController);
         ttsSessionManager.claim(bookKey, ttsController, {
@@ -782,12 +804,19 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
 
           ttsController.setLang(lang);
           ttsController.setRate(viewSettings.ttsRate);
+          ttsController.setSentenceGap(viewSettings.ttsSentenceGap ?? DEFAULT_SENTENCE_GAP_SEC);
+          ttsController.setParagraphGap(viewSettings.ttsParagraphGap ?? DEFAULT_PARAGRAPH_GAP_SEC);
           ttsController.speak(ssml, oneTime, () => handleStop(bookKey));
           ttsController.setTargetLang(getTTSTargetLang() || '');
+        } else {
+          // Nothing to speak: roll back the optimistic playing state.
+          setIsPlaying(false);
         }
         setTtsClientsInitialized(true);
         setTTSEnabled(bookKey, true);
       } catch (error) {
+        setShowIndicator(false);
+        setIsPlaying(false);
         eventDispatcher.dispatch('toast', {
           message: _('TTS not supported for this document'),
           type: 'error',
@@ -828,6 +857,12 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     await ttsController.seekToTime(seconds);
   }, []);
 
+  // Throttled by the scrubber: preview the location under an in-flight drag
+  // (navigate + highlight) without moving the session.
+  const handleSeekPreview = useCallback((seconds: number) => {
+    ttsControllerRef.current?.previewSeekTime(seconds);
+  }, []);
+
   const handleGetPlaybackInfo = useCallback(() => {
     const ttsController = ttsControllerRef.current;
     if (!ttsController) return null;
@@ -841,6 +876,17 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
   const handleSupportsPlaybackInfo = useCallback(() => {
     return ttsControllerRef.current?.supportsPlaybackInfo() ?? false;
   }, []);
+
+  const handleSupportsGapControl = useCallback(() => {
+    return ttsControllerRef.current?.supportsGapControl() ?? false;
+  }, []);
+
+  // Stable handle for the download/chapters surface (reads the cache and
+  // drives headless pre-synthesis off the playback path). MUST be memoized:
+  // an inline arrow here changes identity every render, which would cascade
+  // through useTTSDownloads' refresh callback into its effect and spin an
+  // infinite render loop the moment the sheet opens.
+  const getController = useCallback(() => ttsControllerRef.current, []);
 
   // Playback callbacks
   const handleTogglePlay = useCallback(async () => {
@@ -910,6 +956,18 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     [],
   );
 
+  // Inter-sentence gap: read live at schedule time by the controller, so
+  // changing it must not stop/restart playback like handleSetRate does.
+  const handleSetSentenceGap = useCallback((sec: number) => {
+    ttsControllerRef.current?.setSentenceGap(sec);
+  }, []);
+
+  // Paragraph gap: applies to every TTS client (not Edge-only), read live by
+  // the controller when auto-advancing, so no stop/restart here either.
+  const handleSetParagraphGap = useCallback((sec: number) => {
+    ttsControllerRef.current?.setParagraphGap(sec);
+  }, []);
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleSetVoice = useCallback(
     throttle(async (voice: string, lang: string) => {
@@ -977,14 +1035,19 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
     handleForward,
     handlePause,
     handleSetRate,
+    handleSetSentenceGap,
+    handleSetParagraphGap,
     handleSetVoice,
     handleGetVoices,
     handleGetVoiceId,
     handleSelectTimeout,
     handleBackToCurrentTTSLocation,
     handleSeekTo,
+    handleSeekPreview,
     handleGetPlaybackInfo,
     handleSupportsPlaybackInfo,
+    handleSupportsGapControl,
     refreshTtsLang,
+    getController,
   };
 };

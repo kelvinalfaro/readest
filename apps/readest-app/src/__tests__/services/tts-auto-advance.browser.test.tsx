@@ -66,7 +66,12 @@ function makeMockTTSClient(name: string): TTSClient {
     getAllVoices: () => Promise.resolve([]),
     getVoices: () => Promise.resolve([]),
     getGranularities: () => ['sentence'],
-    supportsWordBoundaries: () => false,
+    getCapabilities: () => ({
+      wordBoundaries: false,
+      mediaClock: false,
+      gapControl: false,
+      liveRateChange: false,
+    }),
     getVoiceId: () => 'mock-voice',
     getSpeakingLang: () => 'en',
   };
@@ -78,8 +83,14 @@ vi.mock('@/services/tts/WebSpeechClient', () => ({
   }),
 }));
 vi.mock('@/services/tts/EdgeTTSClient', () => ({
+  // useTTSControl also imports this named const from the same module; the
+  // mock factory replaces the whole module, so it must re-export it too.
+  DEFAULT_SENTENCE_GAP_SEC: 0.15,
   EdgeTTSClient: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
-    Object.assign(this, makeMockTTSClient('edge'));
+    // TTSController.setSentenceGap always forwards to the real ttsEdgeClient
+    // instance regardless of the active engine, so this mock needs the method
+    // even though the other two client mocks don't.
+    Object.assign(this, makeMockTTSClient('edge'), { setSentenceGap: () => {} });
   }),
 }));
 vi.mock('@/services/tts/NativeTTSClient', () => ({

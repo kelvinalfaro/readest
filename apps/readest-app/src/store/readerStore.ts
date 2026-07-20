@@ -18,6 +18,9 @@ import {
   openPseStreamBook,
   parsePseStreamFileName,
 } from '@/services/opds/pseStream';
+import type { FileSystem } from '@/types/system';
+import { isFeedBookUrl, parseFeedBookUrl } from '@/services/rss/feedBookUrl';
+import { openFeedBookDoc } from '@/services/rss/feedReader';
 import { BOOK_NAV_VERSION, computeBookNav, hydrateBookNav, updateToc } from '@/services/nav';
 import { formatTitle, getMetadataHash, getPrimaryLanguage } from '@/utils/book';
 import { getBaseFilename } from '@/utils/path';
@@ -64,8 +67,13 @@ interface ReaderStore {
   viewStates: { [key: string]: ViewState };
   bookKeys: string[];
   hoveredBookKey: string | null;
+  /* The action tab selected in the mobile bottom bar (font/color/progress);
+     lives here rather than in FooterBar state so the TTS mini player can
+     stack above the expanded panel. Persists across bar hide/show. */
+  bottomBarTab: string;
   setBookKeys: (keys: string[]) => void;
   setHoveredBookKey: (key: string | null) => void;
+  setBottomBarTab: (tab: string) => void;
   setBookmarkRibbonVisibility: (key: string, visible: boolean) => void;
   setTTSEnabled: (key: string, enabled: boolean) => void;
   setAutoScrollEnabled: (key: string, enabled: boolean) => void;
@@ -110,8 +118,10 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
   viewStates: {},
   bookKeys: [],
   hoveredBookKey: null,
+  bottomBarTab: '',
   setBookKeys: (keys: string[]) => set({ bookKeys: keys }),
   setHoveredBookKey: (key: string | null) => set({ hoveredBookKey: key }),
+  setBottomBarTab: (tab: string) => set({ bottomBarTab: tab }),
   getView: (key: string | null) => (key && get().viewStates[key]?.view) || null,
   setView: (key: string, view) =>
     set((state) => ({
@@ -181,14 +191,21 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
         throw new Error('Book not found');
       }
       const isPseStream = !!book.url && isPseStreamFileName(book.url);
+      const isFeed = !!book.url && isFeedBookUrl(book.url);
       let bookDoc = bookData?.bookDoc;
       let file: File | null = bookData?.file ?? null;
-      if (!bookDoc || (!isPseStream && !file) || reload) {
+      if (!bookDoc || (!isPseStream && !isFeed && !file) || reload) {
         console.log('Loading book', key);
         if (isPseStream) {
           const data = parsePseStreamFileName(book.url!);
           const doc = await openPseStreamBook(data);
           bookDoc = doc.book;
+          file = null;
+        } else if (isFeed) {
+          const { feedUrl } = parseFeedBookUrl(book.url!);
+          // AppService publicly exposes the readFile/writeFile/exists surface of FileSystem.
+          const fs = appService as unknown as FileSystem;
+          bookDoc = await openFeedBookDoc(fs, book.hash, feedUrl, book.title);
           file = null;
         } else {
           const content = (await appService.loadBookContent(book)) as BookContent;

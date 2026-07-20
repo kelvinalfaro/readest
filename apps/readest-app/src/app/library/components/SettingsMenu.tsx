@@ -16,10 +16,12 @@ import { useThemeStore } from '@/store/themeStore';
 import { useQuotaStats } from '@/hooks/useQuotaStats';
 import { useFileSyncStore } from '@/store/fileSyncStore';
 import {
-  getCloudSyncProvider,
-  cloudProviderDisplayName,
+  isReadestCloudEnabled,
+  cloudProvidersDisplayName,
   settingsKeyForBackend,
+  type CloudSyncProviderKind,
 } from '@/services/sync/cloudSyncProvider';
+import { getReadyFileSyncBackends } from '@/services/sync/file/runLibrarySync';
 import { useLibraryStore } from '@/store/libraryStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -280,35 +282,41 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
   const coverDir = savedBookCoverPath ? savedBookCoverPath.split('/').pop() : 'Images';
   const savedBookCoverDescription = `💾 ${coverDir}/last-book-cover.png`;
 
-  // While a third-party provider is selected the native cursors freeze (the
-  // book/progress/note channels are gated), so the sync row must report the
-  // file engine's health instead — otherwise it reads "Synced 3 months ago"
-  // forever and looks broken.
-  const cloudProvider = getCloudSyncProvider(settings);
-  const cloudProviderName = cloudProviderDisplayName(cloudProvider);
-  const providerSyncing = cloudProvider !== 'readest' && !!fileSyncByKind[cloudProvider]?.isSyncing;
-  const providerLastError =
-    cloudProvider !== 'readest' ? fileSyncLastError[cloudProvider] : undefined;
-  const lastSyncTime =
-    cloudProvider !== 'readest'
-      ? settings[settingsKeyForBackend(cloudProvider)]?.lastSyncedAt || 0
-      : Math.max(
-          settings.lastSyncedAtBooks || 0,
-          settings.lastSyncedAtConfigs || 0,
-          settings.lastSyncedAtNotes || 0,
-        );
-  const syncRowLabel =
-    cloudProvider !== 'readest'
-      ? providerLastError
-        ? _('Sync failed')
-        : lastSyncTime
-          ? _('Synced {{time}}', {
-              time: dayjs(lastSyncTime).fromNow(),
-            })
-          : _('Never synced')
-      : lastSyncTime
-        ? _('Synced {{time}}', { time: dayjs(lastSyncTime).fromNow() })
-        : _('Never synced');
+  // The sync row reports the health of whatever the user selected. Native
+  // cursors freeze while Readest Cloud is off (the book/progress/note channels
+  // are gated), so the file engine's timestamps have to stand in.
+  const readestEnabled = isReadestCloudEnabled(settings);
+  // Only the providers that can ACTUALLY sync right now. A web Google Drive whose
+  // token expired is still enabled but silently skipped, so it must not be counted
+  // as active or reported as synced (it would otherwise inflate the count and lend
+  // its stale lastSyncedAt to "Synced X ago").
+  const backends = getReadyFileSyncBackends(settings);
+  const providers: CloudSyncProviderKind[] = [
+    ...(readestEnabled ? (['readest'] as const) : []),
+    ...backends,
+  ];
+  const providerNames = cloudProvidersDisplayName(providers);
+
+  const providerSyncing = backends.some((kind) => !!fileSyncByKind[kind]?.isSyncing);
+  const providerLastError = backends.map((kind) => fileSyncLastError[kind]).find(Boolean);
+  const backendLastSyncedAt = Math.max(
+    0,
+    ...backends.map((kind) => settings[settingsKeyForBackend(kind)]?.lastSyncedAt || 0),
+  );
+  const nativeLastSyncedAt = readestEnabled
+    ? Math.max(
+        settings.lastSyncedAtBooks || 0,
+        settings.lastSyncedAtConfigs || 0,
+        settings.lastSyncedAtNotes || 0,
+      )
+    : 0;
+  const lastSyncTime = Math.max(backendLastSyncedAt, nativeLastSyncedAt);
+
+  const syncRowLabel = providerLastError
+    ? _('Sync failed')
+    : lastSyncTime
+      ? _('Synced {{time}}', { time: dayjs(lastSyncTime).fromNow() })
+      : _('Never synced');
 
   return (
     <Menu
@@ -358,14 +366,18 @@ const SettingsMenu: React.FC<SettingsMenuProps> = ({ onPullLibrary, setIsDropdow
               iconClassName={(user && isSyncing) || providerSyncing ? 'animate-reverse-spin' : ''}
               onClick={handleSyncLibrary}
               description={
-                cloudProvider !== 'readest'
-                  ? _('Library sync via {{provider}}', {
-                      provider: cloudProviderName,
-                    })
-                  : undefined
+                backends.length === 0
+                  ? undefined
+                  : providers.length > 1
+                    ? // Several providers named in full would overrun the row; show a
+                      // count. `count` (not a plain var) so i18next applies each
+                      // locale's plural rule — the common case is exactly 2, where
+                      // Slavic/Arabic paucal forms differ from the generic plural.
+                      _('Library sync via {{count}} providers', { count: providers.length })
+                    : _('Library sync via {{provider}}', { provider: providerNames })
               }
             />
-            {cloudProvider === 'readest' ? (
+            {readestEnabled ? (
               <button
                 onClick={handleUserProfile}
                 className='hover:bg-base-300 w-full rounded-md'

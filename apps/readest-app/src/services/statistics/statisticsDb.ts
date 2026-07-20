@@ -136,6 +136,32 @@ export class StatisticsDb {
     );
   }
 
+  /**
+   * Returns the median duration of time spent on each page in seconds. Returns
+   * `null` if sufficient data is not available.
+   *
+   * Use the median since reading times are skewed; thus the median must be
+   * used to get the middle value.
+   */
+  async getMedianPageDurationSecs(idBook: number): Promise<number | null> {
+    const PAGE_THRESHOLD = 5;
+    const rows = await this.db.select<{ duration: number }>(
+      `SELECT duration
+         FROM page_stat_data
+         WHERE id_book = ?
+         ORDER BY start_time DESC
+         LIMIT 50`,
+      [idBook],
+    );
+    if (rows.length < PAGE_THRESHOLD) return null;
+    // The query orders by recency; sort by value so the middle is the true median.
+    const pageDurations = rows.map((d) => d['duration']).sort((a, b) => a - b);
+    const mid = Math.floor(pageDurations.length / 2);
+    return pageDurations.length % 2 !== 0
+      ? (pageDurations[mid] ?? 0)
+      : ((pageDurations[mid - 1] ?? 0) + (pageDurations[mid] ?? 0)) / 2;
+  }
+
   async getBookByMd5(md5: string): Promise<BookRow | null> {
     const rows = await this.db.select<BookRow>(`SELECT * FROM book WHERE md5 = ? LIMIT 1`, [md5]);
     return rows[0] ?? null;

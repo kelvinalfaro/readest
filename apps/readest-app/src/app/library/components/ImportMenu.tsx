@@ -14,6 +14,7 @@ interface ImportMenuProps {
   onImportBookFromUrl?: () => void;
   onOpenCWALibrary?: () => void;
   onOpenCatalogManager: () => void;
+  onOpenFeeds: () => void;
 }
 
 const ImportMenu: React.FC<ImportMenuProps> = ({
@@ -23,6 +24,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
   onImportBookFromUrl,
   onOpenCWALibrary,
   onOpenCatalogManager,
+  onOpenFeeds,
 }) => {
   const _ = useTranslation();
   const { appService } = useEnv();
@@ -84,6 +86,11 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
       <MenuItem
         label={appService?.isOnlineCatalogsAccessible ? _('Online Library') : _('OPDS Catalogs')}
         Icon={<MdRssFeed className='h-5 w-5' />}
+        onClick={handleOpenFeeds}
+      />
+      <MenuItem
+        label={appService?.isOnlineCatalogsAccessible ? _('Online Library') : _('OPDS Catalogs')}
+        Icon={<LuLibrary className='h-5 w-5' />}
         onClick={handleOpenCatalogManager}
       />
     </Menu>

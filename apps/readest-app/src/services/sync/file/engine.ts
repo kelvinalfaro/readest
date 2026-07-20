@@ -17,6 +17,7 @@ import {
   buildRemotePayload,
   parseRemotePayload,
   parseRemoteLibraryIndex,
+  stripDeviceLocalFields,
   RemoteLibraryIndex,
 } from './wire';
 import { mergeBookConfig, mergeBookMetadata, shouldApplyRemoteBookMetadata } from './merge';
@@ -221,6 +222,50 @@ export class FileSyncEngine {
   ) {}
 
   /**
+   * Directories already created (or confirmed to exist) during this engine
+   * instance's sync session. The engine passes the FULL ancestor chain
+   * (`/Readest`, `/Readest/books`, `/Readest/books/<hash>`) to `ensureDir` for
+   * every book, so without this cache the shared parents get re-created on each
+   * book — a redundant round-trip, and a 409 "name already exists" flood on
+   * providers that create folders explicitly (OneDrive) or re-MKCOL (WebDAV).
+   * S3's `ensureDir` no-ops and Drive caches path->id internally, so both are
+   * unaffected. The engine is built per sync session, so the cache lifetime is
+   * one run.
+   */
+  private readonly ensuredDirs = new Set<string>();
+  /**
+   * In-flight per-dir creations, so the concurrency-bounded book workers that
+   * all find a shared parent missing on a fresh remote collapse to one create
+   * instead of several racing calls.
+   */
+  private readonly ensuringDirs = new Map<string, Promise<void>>();
+
+  /**
+   * Session-cached, single-flighted wrapper over {@link FileSyncProvider.ensureDir}.
+   * Ensures each dir top-down (order preserved), skipping any already ensured
+   * this session and de-duplicating concurrent creates of the same path. A
+   * failed create is not cached, so it is retried on the next call.
+   */
+  private async ensureDirs(dirs: string[]): Promise<void> {
+    for (const dir of dirs) {
+      if (this.ensuredDirs.has(dir)) continue;
+      let pending = this.ensuringDirs.get(dir);
+      if (!pending) {
+        pending = this.provider
+          .ensureDir([dir])
+          .then(() => {
+            this.ensuredDirs.add(dir);
+          })
+          .finally(() => {
+            this.ensuringDirs.delete(dir);
+          });
+        this.ensuringDirs.set(dir, pending);
+      }
+      await pending;
+    }
+  }
+
+  /**
    * Pull `<rootPath>/Readest/books/<hash>/config.json`, merge into the
    * provided local config, and return the merged result. The caller writes
    * the merged config back (so the engine stays free of store-write side
@@ -249,13 +294,13 @@ export class FileSyncEngine {
     const dirPath = buildBookDirPath(this.provider.rootPath, book.hash);
     const path = buildBookConfigPath(this.provider.rootPath, book.hash);
     const dirs = [...ancestorsOf(`${dirPath}/.placeholder`), dirPath];
-    await this.provider.ensureDir(dirs);
+    await this.ensureDirs(dirs);
     const body = JSON.stringify(buildRemotePayload(book, config, deviceId));
     try {
       await this.provider.writeText(path, body);
     } catch (e) {
       if (e instanceof FileSyncError && e.status === 409) {
-        await this.provider.ensureDir(dirs);
+        await this.ensureDirs(dirs);
         await this.provider.writeText(path, body);
         return;
       }
@@ -301,12 +346,12 @@ export class FileSyncEngine {
         if (remoteHead && remoteHead.size === src.size) {
           return { uploaded: false, reason: 'remote-matches' };
         }
-        await this.provider.ensureDir(dirs);
+        await this.ensureDirs(dirs);
         let ok = await this.provider.uploadStream(path, src.path);
         if (!ok) {
           // Mirror the buffered path's one-shot retry: a parent may have been
           // recreated mid-PUT (409). Re-ensure directories and try once more.
-          await this.provider.ensureDir(dirs);
+          await this.ensureDirs(dirs);
           ok = await this.provider.uploadStream(path, src.path);
           if (!ok) throw new FileSyncError('Streaming upload failed', 'NETWORK');
         }
@@ -322,12 +367,12 @@ export class FileSyncEngine {
     if (remoteHead && remoteHead.size === local.size) {
       return { uploaded: false, reason: 'remote-matches' };
     }
-    await this.provider.ensureDir(dirs);
+    await this.ensureDirs(dirs);
     try {
       await this.provider.writeBinary(path, local.bytes);
     } catch (e) {
       if (e instanceof FileSyncError && e.status === 409) {
-        await this.provider.ensureDir(dirs);
+        await this.ensureDirs(dirs);
         await this.provider.writeBinary(path, local.bytes);
       } else {
         throw e;
@@ -358,12 +403,12 @@ export class FileSyncEngine {
     if (remoteHead && remoteHead.size === local.size) {
       return { uploaded: false, reason: 'remote-matches' };
     }
-    await this.provider.ensureDir(dirs);
+    await this.ensureDirs(dirs);
     try {
       await this.provider.writeBinary(path, local.bytes, 'image/png');
     } catch (e) {
       if (e instanceof FileSyncError && e.status === 409) {
-        await this.provider.ensureDir(dirs);
+        await this.ensureDirs(dirs);
         await this.provider.writeBinary(path, local.bytes, 'image/png');
       } else {
         throw e;
@@ -433,7 +478,7 @@ export class FileSyncEngine {
   /** PUT the shared library.json index, creating its parent dirs. */
   async pushLibraryIndex(index: RemoteLibraryIndex): Promise<void> {
     const path = buildLibraryPath(this.provider.rootPath);
-    await this.provider.ensureDir(ancestorsOf(path));
+    await this.ensureDirs(ancestorsOf(path));
     await this.provider.writeText(path, JSON.stringify(index));
   }
 
@@ -584,6 +629,33 @@ export class FileSyncEngine {
           hasLocalFile(book) &&
           knownNoSource.get(book.hash) !== (book.updatedAt ?? 0)));
 
+    // A book whose FILE is on the remote is cloud-backed, exactly like a book in
+    // Readest Cloud storage — and `book.uploadedAt` is the only thing the rest of
+    // the app reads to know that. Leaving it null for a provider-synced book made
+    // the whole library misread it as purely-local: it could never be re-downloaded
+    // (`makeBookAvailable` gates on `uploadedAt`), the shelf offered Upload instead
+    // of Download, and — the data loss in #5084 — once "Remove from Device Only"
+    // cleared `downloadedAt`, the stale-record cleanup treated it as a local book
+    // whose file had vanished and offered a delete that GC'd it off the remote.
+    // Stamps are collected and persisted in one batch at the end of the run.
+    const stampedAt = Date.now();
+    const cloudCopyStamps = new Map<string, Book>();
+    const stampCloudCopy = (hash: string): void => {
+      const current = allBooksMap.get(hash);
+      if (!current || current.uploadedAt || current.deletedAt) return;
+      // A fresh object, never an in-place mutation: the caller's rows are the
+      // ones React renders, and a mutated row is invisible to the memo.
+      const stamped: Book = { ...current, uploadedAt: stampedAt };
+      allBooksMap.set(hash, stamped);
+      cloudCopyStamps.set(hash, stamped);
+    };
+    // The index's uploaded-file record already proves the file is on the remote,
+    // so a book another device (or an earlier run) pushed gets stamped without
+    // any request of its own.
+    for (const book of books) {
+      if (uploadedHashes.has(book.hash)) stampCloudCopy(book.hash);
+    }
+
     const remoteBooksToDownload: Book[] = [];
     // The remote source of truth for a book's on-disk filename is the per-hash
     // directory listing — NOT the book's title (which may be stale). We always
@@ -711,8 +783,11 @@ export class FileSyncEngine {
           if (!allBooksMap.has(rb.hash) && !rb.deletedAt) {
             candidateHashes.add(rb.hash);
             // Provisionally register the indexed book — fields refreshed below
-            // once we've inspected the actual hash dir.
-            allBooksMap.set(rb.hash, rb);
+            // once we've inspected the actual hash dir. Strip the pushing
+            // device's local fields: an index written by an older client still
+            // carries its `filePath`, and adopting it would make this device
+            // read the book as a purely-local record (#5084).
+            allBooksMap.set(rb.hash, stripDeviceLocalFields(rb));
           }
         }
       }
@@ -850,11 +925,13 @@ export class FileSyncEngine {
               } catch (e) {
                 console.warn('file sync: config download failed', rb.hash, e);
               }
+              // We just pulled its bytes, so the file is on the remote: the row is
+              // cloud-backed (#5084) and addBookToLibrary persists the stamp.
+              rb.uploadedAt = Date.now();
               await this.store.addBookToLibrary(rb);
               result.booksDownloaded += 1;
               syncedHashes.add(rb.hash);
-              // We just pulled its bytes, so the file is on the remote — record it
-              // so a later push-side sync doesn't HEAD-probe it back.
+              // Record it so a later push-side sync doesn't HEAD-probe it back.
               uploadedHashes.add(rb.hash);
             } else {
               // No bytes returned (typically a 404 we couldn't resolve).
@@ -966,9 +1043,11 @@ export class FileSyncEngine {
                 result.filesUploaded += 1;
                 syncedHashes.add(book.hash);
                 uploadedHashes.add(book.hash);
+                stampCloudCopy(book.hash);
               } else if (fileResult.reason === 'remote-matches') {
                 result.filesAlreadyInSync += 1;
                 uploadedHashes.add(book.hash);
+                stampCloudCopy(book.hash);
               } else if (fileResult.reason === 'no-source') {
                 // The file isn't on this device; remember the verdict for this
                 // exact row so the next run doesn't re-pay the fs probes. It
@@ -1067,7 +1146,7 @@ export class FileSyncEngine {
         try {
           const newIndex: RemoteLibraryIndex = {
             schemaVersion: 1,
-            books: Array.from(indexByHash.values()),
+            books: Array.from(indexByHash.values()).map(stripDeviceLocalFields),
             updatedAt: Date.now(),
             uploadedHashes: nextUploadedHashes,
             emptyDirs: nextEmptyDirs,
@@ -1079,6 +1158,17 @@ export class FileSyncEngine {
         } catch (e) {
           console.warn('file sync: failed to push index', e);
         }
+      }
+    }
+
+    // Persist the cloud-copy stamps in one library write. They must survive a
+    // restart: a row that boots without `uploadedAt` is read as purely-local
+    // again, which is what made "Remove from Device Only" destructive (#5084).
+    if (cloudCopyStamps.size > 0) {
+      try {
+        await this.store.markBooksUploaded(Array.from(cloudCopyStamps.keys()), stampedAt);
+      } catch (e) {
+        console.warn('file sync: failed to persist cloud-copy stamps', e);
       }
     }
 

@@ -136,11 +136,14 @@ vi.mock('@/services/tts', () => ({
       setHighlightGranularity: vi.fn(),
       setLang: vi.fn(),
       setRate: vi.fn(),
+      setSentenceGap: vi.fn(),
+      supportsGapControl: vi.fn().mockReturnValue(false),
       setVoice: vi.fn(),
       setTargetLang: vi.fn(),
       speak: vi.fn(),
       pause: vi.fn().mockResolvedValue(undefined),
       resume: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
       stop: vi.fn().mockResolvedValue(undefined),
       shutdown: vi.fn().mockResolvedValue(undefined),
       forward: vi.fn().mockResolvedValue(undefined),
@@ -207,6 +210,7 @@ vi.mock('@/utils/cfi', () => ({
 
 vi.mock('@/utils/misc', () => ({
   getLocale: () => 'en',
+  getOSPlatform: () => 'macos',
   stubTranslation: (key: string) => key,
 }));
 
@@ -441,6 +445,10 @@ describe('useTTSControl handleHighlightMark cross-section navigation', () => {
     mockView.renderer.goTo.mockClear();
     mockView.goTo.mockClear();
     mockView.resolveCFI.mockReset();
+    // Reset renderer state a test may override (a throwing assertion can skip
+    // an inline restore, leaking into later tests).
+    mockView.renderer.getContents = () => [{ index: 0, doc: document as unknown as Document }];
+    mockView.renderer.scrolled = false;
     mockViewSettings.ttsLocation = null;
   });
 
@@ -497,6 +505,42 @@ describe('useTTSControl handleHighlightMark cross-section navigation', () => {
 
     expect(mockView.renderer.scrollToAnchor).toHaveBeenCalledTimes(1);
     expect(mockView.goTo).not.toHaveBeenCalled();
+  });
+
+  it('does not throw when the renderer has no loaded contents (READEST-19)', async () => {
+    const handler = await setupAndCaptureHighlightHandler();
+    // getContents() can be empty mid-relocate (section still loading / view
+    // torn down); the mark handler must not destructure `doc` off undefined.
+    mockView.renderer.getContents = () => [];
+    mockView.resolveCFI.mockReturnValue({ index: 0, anchor: () => new Range() });
+
+    expect(() => {
+      handler(new CustomEvent('tts-highlight-mark', { detail: { cfi: 'epubcfi(/6/4!/4/2)' } }));
+    }).not.toThrow();
+  });
+
+  it('bails without scrolling when the cfi resolves to a null range (READEST-21)', async () => {
+    const handler = await setupAndCaptureHighlightHandler();
+    // In-section (index 0 == primaryIndex 0) so the follow-scroll path runs,
+    // but the anchor cannot resolve to a range in the doc.
+    mockView.resolveCFI.mockReturnValue({ index: 0, anchor: () => null });
+
+    expect(() => {
+      handler(new CustomEvent('tts-highlight-mark', { detail: { cfi: 'epubcfi(/6/4!/4/2)' } }));
+    }).not.toThrow();
+    // A null range must never reach scrollToAnchor (foliate reads
+    // range.startContainer inside it -> the READEST-21 crash).
+    expect(mockView.renderer.scrollToAnchor).not.toHaveBeenCalled();
+  });
+
+  it('does not throw in scrolled mode when the range is null (READEST-21)', async () => {
+    const handler = await setupAndCaptureHighlightHandler();
+    mockView.renderer.scrolled = true;
+    mockView.resolveCFI.mockReturnValue({ index: 0, anchor: () => null });
+
+    expect(() => {
+      handler(new CustomEvent('tts-highlight-mark', { detail: { cfi: 'epubcfi(/6/4!/4/2)' } }));
+    }).not.toThrow();
   });
 });
 
@@ -647,5 +691,72 @@ describe('useTTSControl background session lifecycle', () => {
       mockView,
       expect.objectContaining({ bookKey: 'book-1' }),
     );
+  });
+});
+
+describe('useTTSControl gap control (handleSetSentenceGap / handleSupportsGapControl)', () => {
+  let hookResult: ReturnType<typeof useTTSControl> | null = null;
+
+  const CaptureHarness = () => {
+    hookResult = useTTSControl({ bookKey: 'book-1' });
+    return null;
+  };
+
+  beforeEach(() => {
+    ttsControllerInstances.length = 0;
+    pendingInitResolvers.length = 0;
+    hookResult = null;
+    mockSessionManager.claim.mockClear();
+    mockSessionManager.getSessionByHash.mockReturnValue(null);
+    mockSessionManager.getActiveSession.mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  const startSession = async () => {
+    render(<CaptureHarness />);
+    await act(async () => {
+      const p = eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1' });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      while (pendingInitResolvers.length > 0) pendingInitResolvers.shift()!();
+      await p;
+    });
+    return ttsControllerInstances[0] as {
+      setSentenceGap: ReturnType<typeof vi.fn>;
+      supportsGapControl: ReturnType<typeof vi.fn>;
+      stop: ReturnType<typeof vi.fn>;
+      start: ReturnType<typeof vi.fn>;
+      state: string;
+    };
+  };
+
+  it('handleSetSentenceGap calls controller.setSentenceGap directly, without stop/start', async () => {
+    const controller = await startSession();
+    controller.state = 'playing';
+
+    act(() => {
+      hookResult!.handleSetSentenceGap(0.5);
+    });
+
+    expect(controller.setSentenceGap).toHaveBeenCalledWith(0.5);
+    expect(controller.stop).not.toHaveBeenCalled();
+    expect(controller.start).not.toHaveBeenCalled();
+  });
+
+  it('handleSupportsGapControl reflects controller.supportsGapControl()', async () => {
+    const controller = await startSession();
+
+    controller.supportsGapControl.mockReturnValue(false);
+    expect(hookResult!.handleSupportsGapControl()).toBe(false);
+
+    controller.supportsGapControl.mockReturnValue(true);
+    expect(hookResult!.handleSupportsGapControl()).toBe(true);
+  });
+
+  it('handleSupportsGapControl returns false when no controller exists yet', () => {
+    render(<CaptureHarness />);
+    expect(hookResult!.handleSupportsGapControl()).toBe(false);
   });
 });

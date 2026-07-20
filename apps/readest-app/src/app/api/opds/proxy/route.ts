@@ -20,6 +20,42 @@ const isPrivateHostAllowed = () => process.env.NODE_ENV === 'development';
  */
 class SsrfBlockedError extends Error {}
 
+const sanitizeXmlBuffer = (buf: ArrayBuffer): ArrayBuffer => {
+  let text = '';
+  const bytes = new Uint8Array(buf);
+  for (const byte of bytes) text += String.fromCharCode(byte);
+
+  let out = '';
+  let inCdata = false;
+  for (let i = 0; i < text.length; i++) {
+    if (!inCdata && text.startsWith('<![CDATA[', i)) {
+      inCdata = true;
+      out += '<![CDATA[';
+      i += '<![CDATA['.length - 1;
+      continue;
+    }
+    if (inCdata && text.startsWith(']]>', i)) {
+      inCdata = false;
+      out += ']]>';
+      i += ']]>'.length - 1;
+      continue;
+    }
+    if (
+      !inCdata &&
+      text[i] === '&' &&
+      !text.slice(i).match(/^&(amp|lt|gt|quot|apos|#[0-9]+|#x[0-9a-fA-F]+);/)
+    ) {
+      out += '&amp;';
+      continue;
+    }
+    out += text[i];
+  }
+
+  const outBytes = new Uint8Array(out.length);
+  for (let i = 0; i < out.length; i++) outBytes[i] = out.charCodeAt(i) & 0xff;
+  return outBytes.buffer;
+};
+
 async function fetchFollowingRedirects(
   startUrl: string,
   init: { method: 'GET' | 'HEAD'; headers: Headers; signal: AbortSignal },
@@ -238,7 +274,10 @@ async function handleRequest(request: NextRequest, method: 'GET' | 'HEAD') {
       });
       return new NextResponse(response.body, { status: 200, headers });
     } else {
-      const buf = await response.arrayBuffer();
+      let buf = await response.arrayBuffer();
+      if (contentType.toLowerCase().includes('xml')) {
+        buf = sanitizeXmlBuffer(buf);
+      }
       const length = buf.byteLength;
       console.log(`[OPDS Proxy] Buffered Success: ${url} (${length} bytes)`);
       return new NextResponse(buf, {

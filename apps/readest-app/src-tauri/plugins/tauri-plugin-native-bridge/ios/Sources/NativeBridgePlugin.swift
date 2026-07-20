@@ -40,6 +40,10 @@ class UseBackgroundAudioRequestArgs: Decodable {
   let enabled: Bool
 }
 
+class SetTextSelectionSuppressedRequestArgs: Decodable {
+  let suppressed: Bool
+}
+
 class SetSystemUIVisibilityRequestArgs: Decodable {
   let visible: Bool
   let darkMode: Bool
@@ -105,6 +109,56 @@ class VolumeKeyHandler: NSObject {
   private(set) var isIntercepting = false
   private var webView: WKWebView?
   private var volumeSlider: UISlider?
+  private var ttsOwnsAudioSession = false
+  private var ttsSessionObservers: [NSObjectProtocol] = []
+
+  override init() {
+    super.init()
+    // tauri-plugin-native-tts announces claim/release of the shared audio
+    // session (see claimAudioSession/deactivateRemoteCommands there). While
+    // TTS owns it (playing or paused), interception must not reconfigure the
+    // session: flipping the non-mixable .playback claim to .mixWithOthers
+    // makes the app ineligible for the Now Playing slot (lock-screen card
+    // dismissed, AirPod controls fall through to another app). Volume KVO
+    // works on the TTS-held session as-is.
+    let center = NotificationCenter.default
+    ttsSessionObservers.append(
+      center.addObserver(
+        forName: Notification.Name("ReadestTTSAudioSessionClaimed"), object: nil, queue: .main
+      ) { [weak self] _ in
+        self?.ttsOwnsAudioSession = true
+      })
+    ttsSessionObservers.append(
+      center.addObserver(
+        forName: Notification.Name("ReadestTTSAudioSessionReleased"), object: nil, queue: .main
+      ) { [weak self] _ in
+        guard let self = self else { return }
+        self.ttsOwnsAudioSession = false
+        // TTS teardown deactivated the session, and it is unordered relative
+        // to a (re)start of interception. If interception is live, re-own the
+        // session so volume KVO keeps firing.
+        if self.isIntercepting {
+          self.configureAudioSession()
+        }
+      })
+  }
+
+  deinit {
+    for observer in ttsSessionObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
+  }
+
+  private func configureAudioSession() {
+    // TTS holds an active non-mixable session; leave it untouched (see init).
+    if ttsOwnsAudioSession { return }
+    do {
+      try audioSession?.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+      try audioSession?.setActive(true)
+    } catch {
+      logger.error("Failed to activate audio session: \(error)")
+    }
+  }
 
   func startInterception(webView: WKWebView) {
     if isIntercepting {
@@ -116,12 +170,7 @@ class VolumeKeyHandler: NSObject {
     isIntercepting = true
 
     audioSession = AVAudioSession.sharedInstance()
-    do {
-      try audioSession?.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-      try audioSession?.setActive(true)
-    } catch {
-      logger.error("Failed to activate audio session: \(error)")
-    }
+    configureAudioSession()
 
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
       guard let self = self else { return }
@@ -770,6 +819,10 @@ class NativeBridgePlugin: Plugin {
     }
   }
 
+  // OBSOLETE for TTS (no JS callers since 2026-07): the native-tts plugin now
+  // claims the audio session itself (non-mixable .playback/.spokenAudio) when
+  // its media session activates. The .mixWithOthers set here disqualifies the
+  // app from Now Playing — do not reintroduce calls around TTS playback.
   @objc public func use_background_audio(_ invoke: Invoke) {
     do {
       let args = try invoke.parseArgs(UseBackgroundAudioRequestArgs.self)
@@ -788,6 +841,17 @@ class NativeBridgePlugin: Plugin {
     } catch {
       logger.error("Failed to set up audio session: \(error)")
     }
+  }
+
+  // Instant-highlight mode owns the touch long-press: suppress the system
+  // text selection for non-editable content so it can never race the app's
+  // hold-to-highlight gesture. See TextSelectionSuppressor.
+  @objc public func set_text_selection_suppressed(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SetTextSelectionSuppressedRequestArgs.self)
+    DispatchQueue.main.async {
+      TextSelectionSuppressor.setSuppressed(args.suppressed)
+    }
+    invoke.resolve()
   }
 
   @objc public func auth_with_safari(_ invoke: Invoke) throws {
@@ -872,10 +936,19 @@ class NativeBridgePlugin: Plugin {
         if volumeKeys {
           self.activateVolumeKeyInterception()
         } else {
+          // Stop intercepting but KEEP the handler alive — do NOT nil it. Its
+          // ReadestTTSAudioSessionClaimed/Released observers must survive the
+          // play/pause cycle. usePagination releases interception the instant TTS
+          // starts playing (the `ttsPlaying` gate) — which is exactly when
+          // tauri-plugin-native-tts posts "Claimed" — and re-acquires it on
+          // pause. If the handler is destroyed here, that fire-once "Claimed" is
+          // lost, and the fresh handler built on the next pause has
+          // ttsOwnsAudioSession=false, so it reconfigures the TTS-owned session
+          // to .mixWithOthers. A mixable session is ineligible for Now Playing,
+          // so iOS vacates the slot and AirPods / lock-screen play resumes
+          // whatever app played before us. A single long-lived handler catches
+          // the claim and leaves the TTS session untouched.
           self.volumeKeyHandler?.stopInterception()
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.volumeKeyHandler = nil
-          }
         }
       }
 
@@ -1591,7 +1664,7 @@ class NativeBridgePlugin: Plugin {
         // Encode and base64 off the main thread; the completion arrives on
         // main and a full-screen encode is fast but not free.
         DispatchQueue.global(qos: .userInteractive).async {
-          guard let data = image.jpegData(compressionQuality: 0.85) else {
+          guard let data = image.jpegData(compressionQuality: 0.9) else {
             return invoke.reject("JPEG encoding failed")
           }
           invoke.resolve(["data": data.base64EncodedString()])

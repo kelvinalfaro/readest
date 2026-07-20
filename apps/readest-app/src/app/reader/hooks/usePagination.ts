@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useEnv } from '@/context/EnvContext';
 import { FoliateView } from '@/types/view';
 import { ViewSettings } from '@/types/book';
@@ -42,7 +42,7 @@ const hasHorizontalPanning = (
   return isPanningView(view, viewSettings) && view.isOverflowX();
 };
 
-const hasVerticalPanning = (
+export const hasVerticalPanning = (
   view: FoliateView | null,
   viewSettings: ViewSettings | null | undefined,
 ) => {
@@ -200,8 +200,14 @@ export const usePagination = (
   const hardwarePageTurner = useSettingsStore((s) => s.settings.hardwarePageTurner);
   // While this book's TTS is actively playing, the volume keys must control the
   // system volume instead of flipping pages (#4691). A paused or stopped session
-  // hands them back to the page-flip interception.
+  // hands them back to the page-flip interception. Safe on iOS because the
+  // native interception never reconfigures the audio session while native TTS
+  // owns it (a .mixWithOthers flip there would vacate the Now Playing slot).
   const [ttsPlaying, setTtsPlaying] = useState(false);
+  // handlePageFlip is registered once (see the effect below), so it can't read
+  // the ttsPlaying state directly without going stale. This ref mirrors it for
+  // the volume-key page-flip guard.
+  const ttsPlayingRef = useRef(false);
 
   const handlePageFlip = async (
     msg: MessageEvent | CustomEvent | React.MouseEvent<HTMLDivElement, MouseEvent>,
@@ -306,7 +312,14 @@ export const usePagination = (
       }
     } else if (msg instanceof CustomEvent) {
       const viewSettings = getViewSettings(bookKey);
-      if (msg.type === 'native-key-down' && viewSettings?.volumeKeysToFlip) {
+      // While TTS is playing, volume keys control the volume, not pagination.
+      // The native layer still forwards the key here (iOS via a lingering KVO,
+      // Android calls onNativeKeyDown unconditionally), so guard it here too.
+      if (
+        msg.type === 'native-key-down' &&
+        viewSettings?.volumeKeysToFlip &&
+        !ttsPlayingRef.current
+      ) {
         const { keyName } = msg.detail;
         setHoveredBookKey('');
         if (keyName === 'VolumeUp') {
@@ -434,7 +447,9 @@ export const usePagination = (
     const handlePlaybackState = (event: Event) => {
       const detail = (event as CustomEvent).detail as { bookKey?: string; state?: string };
       if (detail?.bookKey !== bookKey) return;
-      setTtsPlaying(detail.state === 'playing');
+      const playing = detail.state === 'playing';
+      ttsPlayingRef.current = playing;
+      setTtsPlaying(playing);
     };
     eventDispatcher.on('tts-playback-state', handlePlaybackState);
     return () => {

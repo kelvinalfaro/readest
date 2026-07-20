@@ -9,6 +9,14 @@ import { resolve } from 'path';
  * automotive descriptor that declares the `media` capability. Android Auto
  * then connects to the exported MediaBrowserService
  * (com.readest.native_tts.MediaPlaybackService) to drive TTS playback.
+ *
+ * Withdrawn in #5038 after a Play Auto rejection: the forward/back controls
+ * gave no immediate coherent feedback (the silent player seeked to 0 and the
+ * metadata lagged a ~1s WebView round trip, so the car saw a pause flicker
+ * with no track change). Re-enabled once the skip path was fixed to assert
+ * playing at once and hold state through the round trip (ttsMediaBridge
+ * #skipping + MediaPlaybackService no longer seeks the silent player on
+ * skip), so the car meta-data is present again.
  */
 
 const manifest = readFileSync(
@@ -17,12 +25,12 @@ const manifest = readFileSync(
 );
 
 describe('Android Auto declarations (#3919)', () => {
-  it('declares the car application meta-data pointing at the automotive descriptor', () => {
+  it('opts in to car projection via the car application meta-data', () => {
     expect(manifest).toContain('com.google.android.gms.car.application');
     expect(manifest).toContain('@xml/automotive_app_desc');
   });
 
-  it('ships an automotive descriptor with the media capability', () => {
+  it('keeps the automotive descriptor with the media capability for re-enabling', () => {
     const desc = readFileSync(
       resolve(process.cwd(), 'src-tauri/gen/android/app/src/main/res/xml/automotive_app_desc.xml'),
       'utf-8',

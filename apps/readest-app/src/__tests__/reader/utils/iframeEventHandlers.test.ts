@@ -22,6 +22,17 @@ function mouseEvent(overrides: Partial<MouseEvent> = {}): MouseEvent {
   } as unknown as MouseEvent;
 }
 
+function touchPoint(screenX: number, screenY: number): Touch {
+  return { clientX: screenX, clientY: screenY, screenX, screenY } as Touch;
+}
+
+function touchEvent(touches: Touch[], changedTouches: Touch[] = touches): TouchEvent {
+  return {
+    touches: touches as unknown as TouchList,
+    changedTouches: changedTouches as unknown as TouchList,
+  } as TouchEvent;
+}
+
 function postedTypes(spy: ReturnType<typeof vi.spyOn>): string[] {
   return spy.mock.calls.map((call: unknown[]) => (call[0] as { type: string }).type);
 }
@@ -208,5 +219,194 @@ describe('single-tap opens image gallery / table zoom in reflowable books (#4584
 
     const types = postedMessages().map((m) => m['type']);
     expect(types).not.toContain('iframe-open-media');
+  });
+});
+
+describe('long-press does not open the image gallery / table zoom (#5069)', () => {
+  // A hold over an image/table used to arm a 500ms timer, cancelled only once the
+  // pointer travelled 10px. A slow scroll covers less than that in half a second, so
+  // the timer fired mid-scroll and the viewer opened under the reader's finger. Tap
+  // (#4584) already reaches the same viewer, so nothing registers a long-press
+  // anymore: the iframe handlers must expose no way to attach one.
+  test('the iframe handlers expose no long-press attachment', async () => {
+    const handlers = await importHandlers();
+
+    expect(handlers).not.toHaveProperty('addLongPressListeners');
+  });
+});
+
+describe('iframeEventHandlers touch forwarding', () => {
+  let postSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    postSpy = vi.spyOn(window, 'postMessage').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  test('touchend forwards the released finger through changedTouches', async () => {
+    const { handleTouchEnd } = await importHandlers();
+    const released = {
+      clientX: 20,
+      clientY: 30,
+      screenX: 120,
+      screenY: 230,
+    } as Touch;
+    handleTouchEnd('book-1', {
+      touches: [] as unknown as TouchList,
+      changedTouches: [released] as unknown as TouchList,
+    } as TouchEvent);
+
+    expect(postSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'iframe-touchend',
+        bookKey: 'book-1',
+        targetTouches: [],
+        changedTouches: [
+          {
+            clientX: 20,
+            clientY: 30,
+            screenX: 120,
+            screenY: 230,
+          },
+        ],
+      }),
+      '*',
+    );
+  });
+
+  test('touchcancel forwards the released finger and clears the gesture', async () => {
+    const {
+      handleClick,
+      handleMousedown,
+      handleMouseup,
+      handleTouchStart,
+      handleTouchEnd,
+      handleTouchCancel,
+    } = await importHandlers();
+    const start = touchPoint(200, 300);
+    const released = touchPoint(160, 300);
+
+    handleTouchStart('book-1', touchEvent([start]));
+    handleTouchCancel('book-1', touchEvent([], [released]));
+
+    expect(postSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        type: 'iframe-touchcancel',
+        bookKey: 'book-1',
+        targetTouches: [],
+        changedTouches: [
+          {
+            clientX: 160,
+            clientY: 300,
+            screenX: 160,
+            screenY: 300,
+          },
+        ],
+      }),
+      '*',
+    );
+
+    // A cancelled touch cannot synthesize a click, so it must not suppress a
+    // subsequent deliberate tap at the same release position.
+    handleTouchStart('book-1', touchEvent([released]));
+    handleTouchEnd('book-1', touchEvent([], [released]));
+    handleMousedown('book-1', mouseEvent({ screenX: 160, screenY: 300 }));
+    handleMouseup('book-1', mouseEvent({ screenX: 160, screenY: 300 }));
+    handleClick('book-1', { current: true }, false, mouseEvent({ screenX: 160, screenY: 300 }));
+
+    const singleClicks = postSpy.mock.calls
+      .map((call: unknown[]) => call[0] as { type: string; screenX?: number })
+      .filter((message: { type: string }) => message.type === 'iframe-single-click');
+    expect(singleClicks).toEqual([expect.objectContaining({ screenX: 160 })]);
+  });
+
+  test('a swipe suppresses its synthesized click', async () => {
+    vi.useFakeTimers();
+    const {
+      handleClick,
+      handleMousedown,
+      handleMouseup,
+      handleTouchStart,
+      handleTouchMove,
+      handleTouchEnd,
+    } = await importHandlers();
+    const start = touchPoint(200, 300);
+    const end = touchPoint(120, 300);
+
+    handleTouchStart('book-1', touchEvent([start]));
+    handleTouchMove('book-1', touchEvent([end]));
+    handleTouchEnd('book-1', touchEvent([], [end]));
+    handleMousedown('book-1', mouseEvent({ screenX: 120, screenY: 300 }));
+    handleMouseup('book-1', mouseEvent({ screenX: 120, screenY: 300 }));
+    handleClick('book-1', { current: false }, false, mouseEvent({ screenX: 120, screenY: 300 }));
+    vi.advanceTimersByTime(300);
+
+    expect(postedTypes(postSpy)).not.toContain('iframe-single-click');
+  });
+
+  test('a fast swipe without a touchmove still suppresses its synthesized click', async () => {
+    vi.useFakeTimers();
+    const { handleClick, handleMousedown, handleMouseup, handleTouchStart, handleTouchEnd } =
+      await importHandlers();
+    const start = touchPoint(200, 300);
+    const end = touchPoint(120, 300);
+
+    handleTouchStart('book-1', touchEvent([start]));
+    handleTouchEnd('book-1', touchEvent([], [end]));
+    handleMousedown('book-1', mouseEvent({ screenX: 120, screenY: 300 }));
+    handleMouseup('book-1', mouseEvent({ screenX: 120, screenY: 300 }));
+    handleClick('book-1', { current: false }, false, mouseEvent({ screenX: 120, screenY: 300 }));
+    vi.advanceTimersByTime(300);
+
+    expect(postedTypes(postSpy)).not.toContain('iframe-single-click');
+  });
+
+  test('a tap still forwards its synthesized click', async () => {
+    vi.useFakeTimers();
+    const { handleClick, handleMousedown, handleMouseup, handleTouchStart, handleTouchEnd } =
+      await importHandlers();
+    const point = touchPoint(200, 300);
+
+    handleTouchStart('book-1', touchEvent([point]));
+    handleTouchEnd('book-1', touchEvent([], [point]));
+    handleMousedown('book-1', mouseEvent({ screenX: 200, screenY: 300 }));
+    handleMouseup('book-1', mouseEvent({ screenX: 200, screenY: 300 }));
+    handleClick('book-1', { current: false }, false, mouseEvent({ screenX: 200, screenY: 300 }));
+    vi.advanceTimersByTime(300);
+
+    expect(postedTypes(postSpy)).toContain('iframe-single-click');
+  });
+
+  test('allows a new tap while still suppressing the preceding swipe click', async () => {
+    vi.useFakeTimers();
+    const { handleClick, handleMousedown, handleMouseup, handleTouchStart, handleTouchEnd } =
+      await importHandlers();
+    const swipeStart = touchPoint(200, 300);
+    const swipeEnd = touchPoint(120, 300);
+    const tapPoint = touchPoint(210, 300);
+
+    handleTouchStart('book-1', touchEvent([swipeStart]));
+    handleTouchEnd('book-1', touchEvent([], [swipeEnd]));
+    // This WebView delays the swipe's synthesized click until after the next
+    // deliberate tap. The new click must pass without releasing the old one.
+    handleTouchStart('book-1', touchEvent([tapPoint]));
+    handleTouchEnd('book-1', touchEvent([], [tapPoint]));
+    handleMousedown('book-1', mouseEvent({ screenX: 210, screenY: 300 }));
+    handleMouseup('book-1', mouseEvent({ screenX: 210, screenY: 300 }));
+    handleClick('book-1', { current: true }, false, mouseEvent({ screenX: 210, screenY: 300 }));
+
+    handleMousedown('book-1', mouseEvent({ screenX: 120, screenY: 300 }));
+    handleMouseup('book-1', mouseEvent({ screenX: 120, screenY: 300 }));
+    handleClick('book-1', { current: true }, false, mouseEvent({ screenX: 120, screenY: 300 }));
+
+    const singleClicks = postSpy.mock.calls
+      .map((call: unknown[]) => call[0] as { type: string; screenX?: number })
+      .filter((message: { type: string }) => message.type === 'iframe-single-click');
+    expect(singleClicks).toEqual([expect.objectContaining({ screenX: 210 })]);
   });
 });

@@ -29,12 +29,15 @@ import {
   WebDAVSettings,
   GoogleDriveSettings,
   S3Settings,
+  OneDriveSettings,
 } from '@/types/settings';
 import { UserStorageQuota, UserDailyTranslationQuota } from '@/types/quota';
 import { getDefaultMaxBlockSize, getDefaultMaxInlineSize } from '@/utils/config';
 import { stubTranslation as _ } from '@/utils/misc';
 import { DEFAULT_AI_SETTINGS } from './ai/constants';
 import { DEFAULT_ANNOTATION_TOOLBAR_ITEMS } from '@/utils/annotationToolbar';
+import { DEFAULT_SENTENCE_GAP_SEC } from './tts/EdgeTTSClient';
+import { DEFAULT_PARAGRAPH_GAP_SEC } from './tts/TTSController';
 
 export const DATA_SUBDIR = 'Readest';
 export const LOCAL_BOOKS_SUBDIR = `${DATA_SUBDIR}/Books`;
@@ -138,6 +141,16 @@ export const DEFAULT_S3_SETTINGS = {
   lastSyncedAt: 0,
 } as S3Settings;
 
+export const DEFAULT_ONEDRIVE_SETTINGS = {
+  enabled: false,
+  syncProgress: true,
+  syncNotes: true,
+  syncBooks: false,
+  strategy: 'silent',
+  deviceId: '',
+  lastSyncedAt: 0,
+} as OneDriveSettings;
+
 export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   keepLogin: false,
   autoUpload: true,
@@ -198,6 +211,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   webdav: DEFAULT_WEBDAV_SETTINGS,
   googleDrive: DEFAULT_GOOGLE_DRIVE_SETTINGS,
   s3: DEFAULT_S3_SETTINGS,
+  onedrive: DEFAULT_ONEDRIVE_SETTINGS,
   aiSettings: DEFAULT_AI_SETTINGS,
 
   lastSyncedAtBooks: 0,
@@ -394,11 +408,9 @@ export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   showCurrentBatteryStatus: false,
   showBatteryPercentage: true,
   use24HourClock: false,
-  tapToToggleFooter: false,
   showPaginationButtons: false,
   progressStyle: 'fraction',
   referencePageCount: 0,
-  progressInfoMode: 'all',
 
   animated: false,
   pageTurnStyle: 'push',
@@ -416,11 +428,14 @@ export const DEFAULT_VIEW_CONFIG: ViewConfig = {
 
 export const DEFAULT_TTS_CONFIG: TTSConfig = {
   ttsRate: 1.3,
+  ttsSentenceGap: DEFAULT_SENTENCE_GAP_SEC,
+  ttsParagraphGap: DEFAULT_PARAGRAPH_GAP_SEC,
   ttsVoice: '',
   ttsLocation: '',
   ttsHighlightOptions: { style: 'highlight', color: '#808080' },
   ttsHighlightGranularity: 'word',
   ttsMediaMetadata: 'sentence',
+  ttsPlayerStyle: 'full',
 };
 
 export const DEFAULT_TRANSLATOR_CONFIG: TranslatorConfig = {
