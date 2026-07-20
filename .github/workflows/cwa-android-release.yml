@@ -1,0 +1,163 @@
+name: CWA Android APK Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag. Leave blank to use cwa-android-v<version>-<run-number>.'
+        required: false
+        type: string
+      release_name:
+        description: 'Release title. Leave blank to use Readest CWA Android v<version>.'
+        required: false
+        type: string
+      prerelease:
+        description: 'Mark the GitHub release as a prerelease.'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  android-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          submodules: recursive
+
+      - name: setup pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+
+      - name: setup node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: setup Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+        with:
+          gradle-version: '9.5.1'
+
+      - name: setup Java
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5
+        with:
+          distribution: zulu
+          java-version: '17'
+
+      - name: setup Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+
+      - name: install NDK
+        run: sdkmanager "ndk;28.2.13676358"
+
+      - name: install dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline
+
+      - name: copy pdfjs-dist and simplecc-dist to public directory
+        run: pnpm --filter @readest/readest-app setup-vendors
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          key: cwa-android-release-cargo
+
+      - name: create .env.local file for Next.js
+        run: |
+          {
+            echo "NEXT_PUBLIC_POSTHOG_KEY="
+            echo "NEXT_PUBLIC_POSTHOG_HOST="
+            echo "NEXT_PUBLIC_SUPABASE_URL="
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY="
+            echo "NEXT_PUBLIC_APP_PLATFORM=tauri"
+            echo "SENTRY_DSN="
+          } > .env.local
+          cp .env.local apps/readest-app/.env.local
+
+      - name: create Android signing config
+        working-directory: apps/readest-app/src-tauri/gen/android
+        shell: bash
+        env:
+          CWA_ANDROID_KEY_BASE64: ${{ secrets.CWA_ANDROID_KEY_BASE64 }}
+          CWA_ANDROID_KEY_ALIAS: ${{ secrets.CWA_ANDROID_KEY_ALIAS }}
+          CWA_ANDROID_KEY_PASSWORD: ${{ secrets.CWA_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$CWA_ANDROID_KEY_BASE64" ] || [ -z "$CWA_ANDROID_KEY_ALIAS" ] || [ -z "$CWA_ANDROID_KEY_PASSWORD" ]; then
+            echo "::error::CWA Android signing secrets are required."
+            exit 1
+          fi
+          base64 -d <<< "$CWA_ANDROID_KEY_BASE64" > "$RUNNER_TEMP/cwa-keystore.jks"
+          {
+            echo "keyAlias=$CWA_ANDROID_KEY_ALIAS"
+            echo "password=$CWA_ANDROID_KEY_PASSWORD"
+            echo "storeFile=$RUNNER_TEMP/cwa-keystore.jks"
+          } > keystore.properties
+
+      - name: derive release metadata
+        id: meta
+        shell: bash
+        run: |
+          version="$(node -p "require('./apps/readest-app/package.json').version")"
+          tag="${{ inputs.tag_name }}"
+          name="${{ inputs.release_name }}"
+          if [ -z "$tag" ]; then
+            tag="cwa-android-v${version}-${GITHUB_RUN_NUMBER}"
+          fi
+          if [ -z "$name" ]; then
+            name="Readest CWA Android v${version}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+
+      - name: build Android release apk
+        working-directory: apps/readest-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: pnpm tauri android build -t aarch64
+
+      - name: collect APK asset
+        shell: bash
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          mkdir -p dist-release
+          cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+            "dist-release/Readest_CWA_${version}_arm64.apk"
+          ls -lh dist-release
+
+      - name: create GitHub release and upload APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag }}
+          RELEASE_NAME: ${{ steps.meta.outputs.name }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<EOF
+          Readest CWA Android build from ${GITHUB_SHA}.
+
+          - Package: com.bilingify.readest.cwa
+          - CWA Library OPDS integration included
+          - APK is a signed arm64 release build for direct install
+          EOF
+
+          prerelease_flag=""
+          if [ "$PRERELEASE" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          gh release create "$TAG_NAME" dist-release/*.apk \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$RELEASE_NAME" \
+            --notes-file release-notes.md \
+            $prerelease_flag

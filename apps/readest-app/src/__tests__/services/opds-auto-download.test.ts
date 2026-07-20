@@ -167,6 +167,39 @@ describe('OPDS auto-download orchestrator', () => {
     });
   });
 
+  it('applies skip callback before per-catalog limits', async () => {
+    const catalogs: OPDSCatalog[] = [
+      { id: 'cat-1', name: 'Shelf', url: 'https://shelf.example.com/opds', autoDownload: true },
+    ];
+    vi.mocked(checkFeedForNewItems).mockResolvedValue([
+      {
+        entryId: 'urn:shelf:read',
+        title: 'Read Book',
+        acquisitionHref: '/dl/read.epub',
+        mimeType: 'application/epub+zip',
+        baseURL: 'https://shelf.example.com/opds',
+      },
+      {
+        entryId: 'urn:shelf:unread',
+        title: 'Unread Book',
+        acquisitionHref: '/dl/unread.epub',
+        mimeType: 'application/epub+zip',
+        baseURL: 'https://shelf.example.com/opds',
+      },
+    ]);
+
+    const result = await syncSubscribedCatalogs(catalogs, appService, [], {
+      limitByCatalogId: { 'cat-1': 1 },
+      shouldSkipItem: ({ item }) => item.entryId === 'urn:shelf:read',
+    });
+
+    expect(result.totalNewBooks).toBe(1);
+    expect(downloadFile).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(downloadFile).mock.calls[0]![0].url).toBe(
+      'https://shelf.example.com/dl/unread.epub',
+    );
+  });
+
   it('handles import failure by adding to failedEntries', async () => {
     const catalogs: OPDSCatalog[] = [
       { id: 'cat-1', name: 'Test', url: 'https://example.com/opds', autoDownload: true },
@@ -282,5 +315,64 @@ describe('OPDS auto-download orchestrator', () => {
     await syncSubscribedCatalogs(catalogs, appService, []);
 
     expect(downloadFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a dry-run plan without downloading or saving subscription state', async () => {
+    const catalogs: OPDSCatalog[] = [
+      { id: 'cat-1', name: 'Test', url: 'https://example.com/opds', autoDownload: true },
+    ];
+    vi.mocked(checkFeedForNewItems).mockResolvedValue([
+      {
+        entryId: 'urn:preview:1',
+        title: 'Preview Book',
+        acquisitionHref: '/dl/preview.epub',
+        mimeType: 'application/epub+zip',
+        baseURL: 'https://example.com/opds',
+      },
+    ]);
+    const onCatalogComplete = vi.fn();
+
+    await syncSubscribedCatalogs(catalogs, appService, [], {
+      dryRun: true,
+      onCatalogComplete,
+    });
+
+    expect(downloadFile).not.toHaveBeenCalled();
+    expect(saveSubscriptionState).not.toHaveBeenCalled();
+    expect(onCatalogComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ discovered: 1, planned: 1, attempted: 0 }),
+    );
+  });
+
+  it('retains an exhausted failure so it can be retried explicitly', async () => {
+    const catalogs: OPDSCatalog[] = [
+      { id: 'cat-1', name: 'Test', url: 'https://example.com/opds', autoDownload: true },
+    ];
+    vi.mocked(loadSubscriptionState).mockResolvedValueOnce({
+      catalogId: 'cat-1',
+      lastCheckedAt: 0,
+      knownEntryIds: [],
+      failedEntries: [
+        {
+          entryId: 'urn:exhausted:1',
+          href: '/dl/exhausted.epub',
+          title: 'Exhausted Book',
+          attempts: 2,
+          lastAttemptAt: 0,
+        },
+      ],
+    });
+    vi.mocked(checkFeedForNewItems).mockResolvedValue([]);
+    (appService.importBook as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('still bad'));
+
+    await syncSubscribedCatalogs(catalogs, appService, []);
+
+    const savedState = vi
+      .mocked(saveSubscriptionState)
+      .mock.calls.at(-1)![1] as OPDSSubscriptionState;
+    expect(savedState.knownEntryIds).toContain('urn:exhausted:1');
+    expect(savedState.failedEntries).toEqual([
+      expect.objectContaining({ entryId: 'urn:exhausted:1', attempts: 3 }),
+    ]);
   });
 });

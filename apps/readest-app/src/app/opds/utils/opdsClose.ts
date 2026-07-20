@@ -45,6 +45,10 @@ export const closeOPDSBrowser = (
   router: ReturnType<typeof useRouter>,
   searchParams: ReadonlyURLSearchParams | null,
 ) => {
+  if (searchParams?.get('from') === 'cwa') {
+    router.push('/cwa');
+    return;
+  }
   if (searchParams?.get('from') === 'settings-integrations') {
     stashOPDSReturnTarget(searchParams);
     navigateToLibrary(router, '', undefined, true);

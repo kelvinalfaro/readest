@@ -114,8 +114,15 @@ import { useReplicaPull } from '@/hooks/useReplicaPull';
 import { useCustomFonts } from '@/hooks/useCustomFonts';
 import DropIndicator from '@/components/DropIndicator';
 import SettingsDialog from '@/components/settings/SettingsDialog';
+import {
+  getCWASettings,
+  hasEnabledCWASubscriptions,
+  shouldRunCWAAutoSync,
+  syncCWASubscriptions,
+} from '@/services/cwa';
 import ModalPortal from '@/components/ModalPortal';
 import TransferQueuePanel from './components/TransferQueuePanel';
+import CWAStatusBar from './components/CWAStatusBar';
 
 /** Skip tiny non-book artifacts during folder auto-scan (matches the manual import dialog default). */
 const AUTO_IMPORT_MIN_SIZE_BYTES = 20 * 1024;
@@ -309,25 +316,86 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   useInboxDrainer();
   const { isDragging } = useDragDropImport();
 
+  const syncCWALibrary = useCallback(
+    async (trigger: 'manual' | 'pull' | 'startup' = 'manual') => {
+      if (!appService) return;
+      const { settings: latestSettings } = useSettingsStore.getState();
+      if (!hasEnabledCWASubscriptions(latestSettings)) return;
+
+      if (trigger !== 'startup') {
+        eventDispatcher.dispatch('toast', {
+          type: 'info',
+          timeout: 1800,
+          message: _('CWA sync started'),
+        });
+      }
+
+      const currentLibrary = useLibraryStore.getState().library;
+      const result = await syncCWASubscriptions(appService, latestSettings, currentLibrary, {
+        trigger,
+      });
+      const merged = Array.from(
+        new Map([...currentLibrary, ...result.newBooks].map((book) => [book.hash, book])).values(),
+      );
+      setLibrary(merged);
+      await appService.saveLibraryBooks(merged);
+      const nextSettings = {
+        ...latestSettings,
+        cwa: { ...getCWASettings(latestSettings), lastSyncedAt: Date.now() },
+      };
+      useSettingsStore.getState().setSettings(nextSettings);
+      await useSettingsStore.getState().saveSettings(envConfig, nextSettings);
+
+      if (trigger !== 'startup' || result.errors.length > 0) {
+        eventDispatcher.dispatch('toast', {
+          type: result.errors.length ? 'warning' : 'info',
+          timeout: 2500,
+          message: result.errors.length
+            ? _('CWA synced with {{count}} catalog error(s)', { count: result.errors.length })
+            : _('CWA sync complete: {{count}} new item(s)', { count: result.totalNewBooks }),
+        });
+      }
+    },
+    [_, appService, envConfig, setLibrary],
+  );
+
+  const handlePullToRefreshSync = useCallback(
+    async (full: boolean) => {
+      const latestSettings = useSettingsStore.getState().settings;
+      if (hasEnabledCWASubscriptions(latestSettings)) {
+        await syncCWALibrary('pull');
+        return;
+      }
+
+      if (!user) {
+        navigateToLogin(router);
+        return;
+      }
+      await pullLibrary(full, true);
+      checkOPDSSubscriptions(true);
+    },
+    [checkOPDSSubscriptions, pullLibrary, router, syncCWALibrary, user],
+  );
+
   usePullToRefresh(
     scrollRef,
-    async () => {
-      if (!user) {
-        navigateToLogin(router);
-        return;
-      }
-      await pullLibrary(false, true);
-      checkOPDSSubscriptions(true);
-    },
-    async () => {
-      if (!user) {
-        navigateToLogin(router);
-        return;
-      }
-      await pullLibrary(true, true);
-      checkOPDSSubscriptions(true);
-    },
+    async () => handlePullToRefreshSync(false),
+    async () => handlePullToRefreshSync(true),
   );
+
+  useEffect(() => {
+    if (!libraryLoaded || !appService) return;
+    if (!hasEnabledCWASubscriptions(useSettingsStore.getState().settings)) return;
+    let cancelled = false;
+    void shouldRunCWAAutoSync(appService).then((shouldRun) => {
+      if (!cancelled && shouldRun) void syncCWALibrary('startup');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [appService, libraryLoaded, syncCWALibrary]);
+  useScreenWakeLock(settings.screenWakeLock);
+
   useShortcuts({
     onToggleFullscreen: async () => {
       if (isTauriAppPlatform()) {
@@ -589,6 +657,10 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
 
   const handleShowOPDSDialog = () => {
     setShowCatalogManager(true);
+  };
+
+  const handleOpenCWALibrary = async () => {
+    router.push('/cwa');
   };
 
   const handleDismissOPDSDialog = () => {
@@ -1555,6 +1627,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
             appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
           }
           onImportBookFromUrl={isTauriAppPlatform() ? () => setShowImportFromUrl(true) : undefined}
+          onOpenCWALibrary={handleOpenCWALibrary}
           onOpenCatalogManager={handleShowOPDSDialog}
           onOpenFeeds={handleShowFeeds}
           onToggleSelectMode={() => handleSetSelectMode(!isSelectMode)}
@@ -1617,6 +1690,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           groupName={currentSeriesAuthorGroup.groupName}
         />
       )}
+      <CWAStatusBar />
       {showBookshelf &&
         (libraryBooks.some((book) => !book.deletedAt) ? (
           <div aria-label={_('Your Bookshelf')} className='flex min-h-0 flex-grow flex-col'>

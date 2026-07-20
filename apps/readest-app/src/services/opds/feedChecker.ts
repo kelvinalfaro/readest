@@ -158,6 +158,58 @@ export function getEntryId(pub: OPDSPublication, baseURL: string): string | unde
   return undefined;
 }
 
+const READ_VALUE_RE = /\b(read|finished|complete|completed|done)\b/i;
+const UNREAD_VALUE_RE = /\b(unread|not[\s_-]*read|reading|in[\s_-]*progress|started)\b/i;
+const READ_KEY_RE = /\b(unread|read|read_status|reading_status|status|finished|completed)\b/i;
+
+function asTextValues(value: unknown): string[] {
+  if (value == null) return [];
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) return value.flatMap(asTextValues);
+  if (typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => [
+      key,
+      ...asTextValues(child),
+    ]);
+  }
+  return [];
+}
+
+function classifyReadText(values: string[]): 'read' | 'unread' | 'unknown' {
+  for (const value of values) {
+    if (UNREAD_VALUE_RE.test(value)) return 'unread';
+  }
+  for (const value of values) {
+    if (READ_VALUE_RE.test(value)) return 'read';
+  }
+  return 'unknown';
+}
+
+export function getServerReadStatus(pub: OPDSPublication): 'read' | 'unread' | 'unknown' {
+  const metadata = pub.metadata as Record<string, unknown>;
+  const targetedValues: string[] = [];
+  for (const [key, value] of Object.entries(metadata)) {
+    if (READ_KEY_RE.test(key)) targetedValues.push(...asTextValues(value));
+  }
+
+  const subjectValues = asTextValues(metadata['subject']).filter((value) =>
+    READ_KEY_RE.test(value),
+  );
+  targetedValues.push(...subjectValues);
+
+  for (const link of pub.links) {
+    targetedValues.push(...asTextValues(link.properties));
+    targetedValues.push(...asTextValues(link.rel).filter((value) => READ_KEY_RE.test(value)));
+  }
+
+  const targeted = classifyReadText(targetedValues);
+  if (targeted !== 'unknown') return targeted;
+
+  return classifyReadText(asTextValues(pub).filter((value) => READ_KEY_RE.test(value)));
+}
+
 /**
  * Extract the rel=next pagination URL from a feed.
  */
@@ -203,6 +255,7 @@ export function collectNewEntries(
       mimeType: acqLink.type ?? 'application/octet-stream',
       updated: pub.metadata.updated,
       baseURL,
+      serverReadStatus: getServerReadStatus(pub),
     });
   }
   return items;

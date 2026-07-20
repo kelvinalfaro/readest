@@ -49,6 +49,7 @@ export const BACKUP_SETTINGS_BLACKLIST = [
   'lastSyncedAtReplicas',
   'readwise.lastSyncedAt',
   'hardcover.lastSyncedAt',
+  'cwa.lastSyncedAt',
   'googleDrive.deviceId',
   'googleDrive.lastSyncedAt',
   'webdav.deviceId',
@@ -81,6 +82,8 @@ export const BACKUP_SETTINGS_CREDENTIAL_FIELDS = [
   'kosync.username',
   'kosync.userkey',
   'kosync.password',
+  'cwa.username',
+  'cwa.password',
   'readwise.accessToken',
   'hardcover.accessToken',
   // S3 access keys are strong, long-lived cloud credentials — strip them from

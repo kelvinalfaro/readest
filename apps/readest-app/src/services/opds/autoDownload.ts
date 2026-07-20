@@ -14,10 +14,19 @@ import {
   pruneKnownEntryIds,
 } from './subscriptionState';
 import { upsertOPDSSourceMapping } from './sourceMap';
-import { isRetryEligible, DOWNLOAD_CONCURRENCY, MAX_RETRY_ATTEMPTS } from './types';
-import type { PendingItem, SyncResult, OPDSSubscriptionState, FailedEntry } from './types';
+import { isRetryEligible, getNextRetryAt, DOWNLOAD_CONCURRENCY, MAX_RETRY_ATTEMPTS } from './types';
+import type {
+  PendingItem,
+  SyncResult,
+  OPDSSubscriptionState,
+  FailedEntry,
+  OPDSSyncOptions,
+  OPDSCatalogSyncStats,
+} from './types';
 import { runWithConcurrency } from '@/utils/concurrency';
 import { uniqueId } from '@/utils/misc';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Download a single item and import it into the library.
@@ -113,11 +122,24 @@ async function syncCatalog(
   catalog: OPDSCatalog,
   appService: AppService,
   books: Book[],
+  options: OPDSSyncOptions = {},
 ): Promise<{ newBooks: Book[]; state: OPDSSubscriptionState }> {
   const state = await loadSubscriptionState(appService, catalog.id);
+  const stats: OPDSCatalogSyncStats = {
+    catalogId: catalog.id,
+    catalogName: catalog.name,
+    discovered: 0,
+    deferredByBackoff: 0,
+    filtered: 0,
+    planned: 0,
+    attempted: 0,
+    downloaded: 0,
+    failed: 0,
+  };
 
   // Discovery: find new items from feeds
   const pendingItems = await checkFeedForNewItems(catalog, state);
+  stats.discovered = pendingItems.length;
 
   // Failed entries still in their backoff window must not be re-attempted
   // until they become retry-eligible. They naturally reappear in
@@ -129,6 +151,7 @@ async function syncCatalog(
     state.failedEntries.filter((fe) => !isRetryEligible(fe)).map((fe) => fe.entryId),
   );
   const eligiblePendingItems = pendingItems.filter((p) => !inBackoffIds.has(p.entryId));
+  stats.deferredByBackoff = pendingItems.length - eligiblePendingItems.length;
 
   // Collect retry-eligible failed entries as PendingItems
   const retryItems: PendingItem[] = state.failedEntries.filter(isRetryEligible).map((fe) => ({
@@ -143,22 +166,74 @@ async function syncCatalog(
   // (because the entry isn't in knownEntryIds yet). Prefer the pending copy
   // since it carries the freshly-discovered MIME type from the feed.
   const seenIds = new Set<string>();
-  const allItems: PendingItem[] = [];
+  let allItems: PendingItem[] = [];
   for (const item of [...eligiblePendingItems, ...retryItems]) {
     if (seenIds.has(item.entryId)) continue;
     seenIds.add(item.entryId);
     allItems.push(item);
   }
+
+  const onlyEntryIds = options.onlyEntryIdsByCatalogId?.[catalog.id];
+  if (onlyEntryIds) {
+    const allowed = new Set(onlyEntryIds);
+    allItems = allItems.filter((item) => allowed.has(item.entryId));
+  }
+
+  if (options.shouldSkipItem) {
+    const filteredItems: PendingItem[] = [];
+    for (const item of allItems) {
+      const sourceUrl = resolveURL(item.acquisitionHref, item.baseURL);
+      const shouldSkip = await options.shouldSkipItem({
+        item,
+        catalogId: catalog.id,
+        catalogName: catalog.name,
+        sourceUrl,
+      });
+      if (!shouldSkip) {
+        filteredItems.push(item);
+      } else {
+        stats.filtered += 1;
+      }
+    }
+    allItems = filteredItems;
+  }
+
+  const limit = options.limitByCatalogId?.[catalog.id];
+  if (limit && limit > 0) {
+    allItems = allItems.slice(0, limit);
+  }
+  stats.planned = allItems.length;
   if (allItems.length === 0) {
-    state.lastCheckedAt = Date.now();
-    await saveSubscriptionState(appService, state);
+    stats.failed = state.failedEntries.length;
+    stats.nextRetryAt = getNextRetryAt(state.failedEntries);
+    if (!options.dryRun) {
+      state.lastCheckedAt = Date.now();
+      await saveSubscriptionState(appService, state);
+    }
+    await options.onCatalogComplete?.(stats);
+    return { newBooks: [], state };
+  }
+
+  if (options.dryRun) {
+    stats.failed = state.failedEntries.length;
+    stats.nextRetryAt = getNextRetryAt(state.failedEntries);
+    await options.onCatalogComplete?.(stats);
     return { newBooks: [], state };
   }
 
   // Acquisition: download with bounded concurrency
-  const downloadResults = await runWithConcurrency(allItems, DOWNLOAD_CONCURRENCY, (item) =>
-    downloadAndImport(item, catalog, appService, books),
-  );
+  const downloadConcurrency = options.downloadConcurrency ?? DOWNLOAD_CONCURRENCY;
+  const delayBetweenDownloadsMs = Math.max(0, options.delayBetweenDownloadsMs ?? 0);
+  stats.attempted = allItems.length;
+  let completedDownloads = 0;
+  const downloadResults = await runWithConcurrency(allItems, downloadConcurrency, async (item) => {
+    const book = await downloadAndImport(item, catalog, appService, books);
+    completedDownloads += 1;
+    if (delayBetweenDownloadsMs > 0 && completedDownloads < allItems.length) {
+      await sleep(delayBetweenDownloadsMs);
+    }
+    return book;
+  });
 
   // Process results and update state
   const newBooks: Book[] = [];
@@ -171,14 +246,32 @@ async function syncCatalog(
   for (const outcome of downloadResults) {
     const item = outcome.item;
     if ('result' in outcome) {
-      newBooks.push(outcome.result);
+      const book = outcome.result;
+      newBooks.push(book);
+      stats.downloaded += 1;
       newKnownIds.push(item.entryId);
+      const sourceUrl = resolveURL(item.acquisitionHref, item.baseURL);
+      await options.onBookImported?.({
+        book,
+        catalogId: catalog.id,
+        catalogName: catalog.name,
+        sourceUrl,
+        item,
+      });
     } else {
+      stats.failed += 1;
       const existingFailed = state.failedEntries.find((fe) => fe.entryId === item.entryId);
       const attempts = (existingFailed?.attempts ?? 0) + 1;
 
       if (attempts >= MAX_RETRY_ATTEMPTS) {
         newKnownIds.push(item.entryId);
+        updatedFailedEntries.push({
+          entryId: item.entryId,
+          href: item.acquisitionHref,
+          title: item.title,
+          attempts,
+          lastAttemptAt: Date.now(),
+        });
         console.error(
           `OPDS sync: permanently skipping "${item.title}" after ${attempts} failed attempts`,
         );
@@ -196,8 +289,11 @@ async function syncCatalog(
 
   state.knownEntryIds = pruneKnownEntryIds([...state.knownEntryIds, ...newKnownIds]);
   state.failedEntries = updatedFailedEntries;
+  stats.failed = updatedFailedEntries.length;
+  stats.nextRetryAt = getNextRetryAt(updatedFailedEntries);
   state.lastCheckedAt = Date.now();
   await saveSubscriptionState(appService, state);
+  await options.onCatalogComplete?.(stats);
 
   return { newBooks, state };
 }
@@ -215,6 +311,7 @@ export async function syncSubscribedCatalogs(
   catalogs: OPDSCatalog[],
   appService: AppService,
   books: Book[],
+  options: OPDSSyncOptions = {},
 ): Promise<SyncResult> {
   const eligible = catalogs.filter((c) => c.autoDownload && !c.disabled);
   if (eligible.length === 0) {
@@ -226,13 +323,25 @@ export async function syncSubscribedCatalogs(
 
   for (const catalog of eligible) {
     try {
-      const { newBooks } = await syncCatalog(catalog, appService, books);
+      const { newBooks } = await syncCatalog(catalog, appService, books, options);
       allNewBooks.push(...newBooks);
     } catch (reason) {
       console.error(`OPDS sync: catalog "${catalog.name}" failed:`, reason);
       errors.push({
         catalogId: catalog.id,
         catalogName: catalog.name,
+        error: reason instanceof Error ? reason.message : String(reason),
+      });
+      await options.onCatalogComplete?.({
+        catalogId: catalog.id,
+        catalogName: catalog.name,
+        discovered: 0,
+        deferredByBackoff: 0,
+        filtered: 0,
+        planned: 0,
+        attempted: 0,
+        downloaded: 0,
+        failed: 0,
         error: reason instanceof Error ? reason.message : String(reason),
       });
       try {

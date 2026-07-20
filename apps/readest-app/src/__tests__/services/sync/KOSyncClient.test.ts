@@ -163,4 +163,27 @@ describe('KOSyncClient.connect – server validation', () => {
     expect(result.success).toBe(false);
     expect(mock).toHaveBeenCalled();
   });
+
+  it('retries with /kosync when a copied CWA web base returns HTML', async () => {
+    const calls: string[] = [];
+    setFetch((url: unknown) => {
+      const requestUrl = String(url);
+      calls.push(requestUrl);
+      if (requestUrl.includes('/books/kosync/users/auth')) {
+        return jsonResponse(200, { authorized: 'OK' });
+      }
+      return htmlPage(200);
+    });
+
+    const config = makeConfig({ serverUrl: 'http://192.168.1.50/books' });
+    const client = new KOSyncClient(config);
+    const result = await client.connect('alice', 'secret');
+
+    expect(result.success).toBe(true);
+    expect(calls).toEqual([
+      'http://192.168.1.50/books/users/auth',
+      'http://192.168.1.50/books/kosync/users/auth',
+    ]);
+    expect(config.serverUrl).toBe('http://192.168.1.50/books/kosync');
+  });
 });

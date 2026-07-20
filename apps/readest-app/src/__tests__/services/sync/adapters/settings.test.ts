@@ -125,47 +125,13 @@ describe('settingsAdapter', () => {
     expect(out.patch.globalReadSettings?.userHighlightColors).toEqual(userColors);
   });
 
-  test('pack ∘ unpack round-trips S3 connection fields, dropping per-device state', () => {
-    const record: SettingsRemoteRecord = {
-      name: 'singleton',
-      patch: {
-        s3: {
-          enabled: true,
-          endpoint: 'https://acc.r2.cloudflarestorage.com',
-          region: 'auto',
-          bucket: 'readest',
-          accessKeyId: 'AKIA',
-          secretAccessKey: 'shh',
-          deviceId: 'this-device',
-          lastSyncedAt: 123,
-          providerSelectedAt: 456,
-        },
-      } as unknown as Partial<SystemSettings>,
-    };
-    const fields = settingsAdapter.pack(record);
-    expect(fields['s3.endpoint']).toBe('https://acc.r2.cloudflarestorage.com');
-    expect(fields['s3.region']).toBe('auto');
-    expect(fields['s3.bucket']).toBe('readest');
-    expect(fields['s3.accessKeyId']).toBe('AKIA');
-    expect(fields['s3.secretAccessKey']).toBe('shh');
-    // Per-device bookkeeping must not ship.
-    expect(fields['s3.enabled']).toBeUndefined();
-    expect(fields['s3.deviceId']).toBeUndefined();
-    expect(fields['s3.lastSyncedAt']).toBeUndefined();
-    expect(fields['s3.providerSelectedAt']).toBeUndefined();
-
-    const out = settingsAdapter.unpack(fields);
-    expect(out.patch.s3?.endpoint).toBe('https://acc.r2.cloudflarestorage.com');
-    expect(out.patch.s3?.accessKeyId).toBe('AKIA');
-    expect(out.patch.s3?.secretAccessKey).toBe('shh');
-    expect(out.patch.s3?.enabled).toBeUndefined();
-  });
-
-  test('declares encryptedFields covering kosync / readwise / hardcover / webdav / s3 credentials only (not serverUrl / endpoint)', () => {
+  test('declares encryptedFields covering integration credentials only (not serverUrl)', () => {
     expect(settingsAdapter.encryptedFields).toEqual([
       'kosync.username',
       'kosync.userkey',
       'kosync.password',
+      'cwa.username',
+      'cwa.password',
       'readwise.accessToken',
       'hardcover.accessToken',
       'webdav.username',

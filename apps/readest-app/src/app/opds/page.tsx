@@ -58,7 +58,8 @@ import { normalizeOPDSCustomHeaders } from './utils/customHeaders';
 import { closeOPDSBrowser, stashOPDSReturnTarget } from './utils/opdsClose';
 import { findExistingBookForPublication } from './utils/findExistingBook';
 import Dialog from '@/components/Dialog';
-import { uniqueId } from '@/utils/misc';
+import { addCWABookSource, getCWASettings, resolveCWAUrl } from '@/services/cwa';
+import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
 
 type ViewMode = 'feed' | 'publication' | 'search' | 'loading' | 'error';
 
@@ -109,8 +110,16 @@ export default function BrowserPage() {
   const searchParams = useSearchParams();
   const catalogUrl = searchParams?.get('url') || '';
   const catalogId = searchParams?.get('id') || '';
+  const cwaSubscriptionId = searchParams?.get('cwaSubscriptionId') || '';
+  const cwa = getCWASettings(settings);
+  const cwaSubscription = cwa.subscriptions.find((sub) => sub.id === cwaSubscriptionId);
+  const effectiveCatalogUrl = cwaSubscription
+    ? resolveCWAUrl(cwa, cwaSubscription.url)
+    : catalogUrl;
   const catalog = settings.opdsCatalogs?.find((catalog) => catalog.id === catalogId);
-  const catalogSourceId = catalog?.contentId || catalogId || catalogUrl;
+  const catalogSourceId = cwaSubscription
+    ? computeOpdsCatalogContentId(effectiveCatalogUrl)
+    : catalog?.contentId || catalogId || catalogUrl;
   // Captured once at mount so the restore effect targets exactly the
   // detail the URL described when /opds first loaded — typically after a
   // Reader → webview-back. Subsequent in-page navigation can mutate the
@@ -369,7 +378,7 @@ export default function BrowserPage() {
   );
 
   useEffect(() => {
-    const url = catalogUrl;
+    const url = effectiveCatalogUrl;
     if (url && !isNavigatingHistoryRef.current) {
       const loadKey = `${catalogId}::${url}`;
       // Skip if this effect re-fires for an unrelated `settings` change
@@ -380,7 +389,7 @@ export default function BrowserPage() {
         return;
       }
       const catalog = settings.opdsCatalogs?.find((cat) => cat.id === catalogId);
-      const { username, password } = catalog || {};
+      const { username, password } = cwaSubscription ? cwa : catalog || {};
       if (username || password) {
         usernameRef.current = username;
         passwordRef.current = password;
@@ -399,7 +408,7 @@ export default function BrowserPage() {
       setViewMode('error');
       setError(new Error('No OPDS URL provided'));
     }
-  }, [catalogUrl, catalogId, settings, libraryLoaded, loadOPDS]);
+  }, [effectiveCatalogUrl, catalogId, settings, libraryLoaded, loadOPDS, cwaSubscriptionId]);
 
   const handleNavigate = useCallback(
     (url: string, isSearch = false) => {
@@ -628,6 +637,16 @@ export default function BrowserPage() {
                 console.error('OPDS: failed to update source map:', sourceMapError);
               }
             }
+            if (book && cwaSubscription) {
+              addCWABookSource(book, {
+                subscriptionId: cwaSubscription.id,
+                subscriptionName: cwaSubscription.name,
+                catalogId: `cwa-sub-${cwaSubscription.id}`,
+                entryId: publication?.metadata?.id,
+                sourceUrl: url,
+                downloadedAt: Date.now(),
+              });
+            }
             if (
               user &&
               book &&
@@ -652,7 +671,16 @@ export default function BrowserPage() {
         throw e;
       }
     },
-    [user, state.baseURL, appService, libraryLoaded, settings.autoUpload, catalogSourceId],
+    [
+      user,
+      state.baseURL,
+      appService,
+      libraryLoaded,
+      settings.autoUpload,
+      catalogSourceId,
+      cwaSubscription,
+      publication,
+    ],
   );
 
   const handleStream = useCallback(
@@ -993,7 +1021,7 @@ export default function BrowserPage() {
           baseURL={state.baseURL}
           resolveURL={resolveURL}
           onNavigate={handleNavigate}
-          onAddCatalog={handleOpenAddCatalog}
+          onAddCatalog={cwaSubscription ? undefined : handleOpenAddCatalog}
         />
       </div>
       <main className='flex-1 overflow-auto'>
@@ -1029,7 +1057,7 @@ export default function BrowserPage() {
             resolveURL={resolveURL}
             onGenerateCachedImageUrl={handleGenerateCachedImageUrl}
             isOPDSCatalog={isOPDSCatalog}
-            onAddCatalog={handleOpenAddCatalog}
+            onAddCatalog={cwaSubscription ? undefined : handleOpenAddCatalog}
           />
         )}
 

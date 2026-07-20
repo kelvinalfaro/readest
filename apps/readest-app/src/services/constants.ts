@@ -20,6 +20,7 @@ import {
 import {
   HardcoverSettings,
   KOSyncSettings,
+  CWASettings,
   LibraryGroupByType,
   LibrarySortByType,
   ReadSettings,
@@ -77,6 +78,14 @@ export const DEFAULT_KOSYNC_SETTINGS = {
   strategy: 'prompt',
   enabled: false,
 } as KOSyncSettings;
+
+export const DEFAULT_CWA_SETTINGS = {
+  enabled: false,
+  serverUrl: '',
+  username: '',
+  password: '',
+  subscriptions: [],
+} as CWASettings;
 
 export const READWISE_API_BASE_URL = 'https://readwise.io/api/v2';
 
@@ -196,6 +205,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   },
 
   kosync: DEFAULT_KOSYNC_SETTINGS,
+  cwa: DEFAULT_CWA_SETTINGS,
   readwise: DEFAULT_READWISE_SETTINGS,
   hardcover: DEFAULT_HARDCOVER_SETTINGS,
   webdav: DEFAULT_WEBDAV_SETTINGS,

@@ -13,7 +13,7 @@ import {
   RiCloudFill,
   RiDatabase2Line,
   RiGoogleLine,
-  RiMicrosoftLine,
+  RiServerLine,
 } from 'react-icons/ri';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
@@ -31,6 +31,7 @@ import { getGoogleWebClientId } from '@/services/sync/providers/gdrive/buildGoog
 import { getMicrosoftClientId } from '@/services/sync/providers/onedrive/buildOneDriveProvider';
 import { navigateToLogin, navigateToProfile } from '@/utils/nav';
 import KOSyncForm from './integrations/KOSyncForm';
+import CWAForm from './integrations/CWAForm';
 import ReadwiseForm from './integrations/ReadwiseForm';
 import HardcoverForm from './integrations/HardcoverForm';
 import SendToReadestForm from './integrations/SendToReadestForm';
@@ -56,8 +57,11 @@ import { canBackendRun } from '@/services/sync/file/runLibrarySync';
 import SubPageHeader from './SubPageHeader';
 import { BoxedList, NavigationRow, SectionTitle, SettingLabel, Tips } from './primitives';
 
+const SHOW_PREMIUM_SURFACES = true;
+
 type SubPage =
   | 'kosync'
+  | 'cwa'
   | 'webdav'
   | 'gdrive'
   | 's3'
@@ -71,7 +75,7 @@ type SubPage =
 
 /**
  * Integrations panel — single point of discovery for external service config:
- * KOReader Sync, Readwise, Hardcover, and OPDS Catalogs.
+ * KOReader Sync, CWA, Readwise, Hardcover, and OPDS Catalogs.
  *
  * Pattern: boxed list of NavigationRows. Each row pushes the panel into an
  * inline sub-page (with breadcrumb back-navigation matching the Dictionaries
@@ -116,7 +120,7 @@ const IntegrationsPanel: React.FC = () => {
 
   const [subPage, setSubPage] = useState<SubPage>(null);
 
-  // Android Back / Esc: when any integrations sub-page (KOSync, WebDAV,
+  // Android Back / Esc: when any integrations sub-page (KOSync, CWA, WebDAV,
   // Readwise, Hardcover, OPDS, Send-to-Readest) is open, intercept and
   // step back to the integrations list instead of letting <Dialog>'s
   // listener close the whole Settings dialog. The hook registers its
@@ -150,6 +154,10 @@ const IntegrationsPanel: React.FC = () => {
       requestedSubPage === 's3' ||
       requestedSubPage === 'onedrive' ||
       requestedSubPage === 'cloudsync';
+    if (!SHOW_PREMIUM_SURFACES && isCloudRequest) {
+      setRequestedSubPage(null);
+      return;
+    }
     // Cloud-sync sub-pages are premium-gated. If the plan is still loading, wait
     // (don't consume the request); once known, only honor it for paid plans.
     if (isCloudRequest && !isCloudSyncPremium) {
@@ -159,6 +167,7 @@ const IntegrationsPanel: React.FC = () => {
     }
     if (
       requestedSubPage === 'kosync' ||
+      requestedSubPage === 'cwa' ||
       requestedSubPage === 'webdav' ||
       requestedSubPage === 'gdrive' ||
       requestedSubPage === 's3' ||
@@ -186,7 +195,13 @@ const IntegrationsPanel: React.FC = () => {
         <KOSyncForm onBack={() => setSubPage(null)} />
       </div>
     );
-  if (subPage === 'webdav')
+  if (subPage === 'cwa')
+    return (
+      <div className='my-4 w-full'>
+        <CWAForm onBack={() => setSubPage(null)} />
+      </div>
+    );
+  if (SHOW_PREMIUM_SURFACES && subPage === 'webdav')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -216,7 +231,7 @@ const IntegrationsPanel: React.FC = () => {
         )}
       </div>
     );
-  if (subPage === 'gdrive')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'gdrive')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -246,7 +261,7 @@ const IntegrationsPanel: React.FC = () => {
         )}
       </div>
     );
-  if (subPage === 's3')
+  if (SHOW_PREMIUM_SURFACES && subPage === 's3')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -290,37 +305,7 @@ const IntegrationsPanel: React.FC = () => {
         </div>
       </div>
     );
-  if (subPage === 'onedrive')
-    return (
-      <div className='my-4 w-full'>
-        <SubPageHeader
-          parentLabel={_('Integrations')}
-          currentLabel={_('OneDrive')}
-          description={_(
-            'Sync your library, reading progress, and highlights with your Microsoft OneDrive.',
-          )}
-          onBack={() => setSubPage(null)}
-        />
-        <OneDriveForm />
-        {settings.onedrive?.enabled && (
-          <div className='mt-5'>
-            <Tips>
-              <li>
-                {_('{{provider}} keeps a full copy of your books, progress, and annotations.', {
-                  provider: _('OneDrive'),
-                })}
-              </li>
-              <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
-              </li>
-            </Tips>
-          </div>
-        )}
-      </div>
-    );
-  if (subPage === 'readest-cloud')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'readest-cloud')
     return (
       <div className='my-4 w-full'>
         <SubPageHeader
@@ -362,7 +347,7 @@ const IntegrationsPanel: React.FC = () => {
         <CatalogManager inSubPage />
       </div>
     );
-  if (subPage === 'send')
+  if (SHOW_PREMIUM_SURFACES && subPage === 'send')
     return (
       <div className='my-4 w-full'>
         <SendToReadestForm onBack={() => setSubPage(null)} />
@@ -374,6 +359,11 @@ const IntegrationsPanel: React.FC = () => {
       ? _('Connected as {{user}}', { user: settings.kosync.username })
       : _('Connected')
     : _('Not connected');
+  const cwaStatus = settings.cwa?.enabled
+    ? settings.cwa.username
+      ? _('Connected as {{user}}', { user: settings.cwa.username })
+      : _('Configured')
+    : _('Not configured');
 
   const readwiseStatus = settings.readwise?.enabled ? _('Connected') : _('Not connected');
   const hardcoverStatus = settings.hardcover?.enabled ? _('Connected') : _('Not connected');
@@ -475,6 +465,12 @@ const IntegrationsPanel: React.FC = () => {
               onClick={() => setSubPage('kosync')}
             />
             <IntegrationRow
+              icon={RiServerLine}
+              title={_('CWA Library')}
+              status={cwaStatus}
+              onClick={() => setSubPage('cwa')}
+            />
+            <IntegrationRow
               icon={RiBookReadLine}
               title={_('Readwise')}
               status={readwiseStatus}
@@ -490,122 +486,75 @@ const IntegrationsPanel: React.FC = () => {
         </div>
       </div>
 
-      <div className='w-full' data-setting-id='settings.integrations.cloudSync'>
-        <SectionTitle className='mb-2'>{_('Cloud Sync')}</SectionTitle>
-        <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
-          <div
-            className='divide-base-200 divide-y'
-            role='group'
-            aria-label={_('Cloud sync providers')}
-          >
-            <CloudProviderRow
-              icon={RiCloudFill}
-              title={_('Readest Cloud')}
-              status={readestStatus}
-              checked={!!user && readestEnabled}
-              canToggle={!!user}
-              onToggle={(next) => toggleCloudProvider('readest', next)}
-              onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
-              toggleLabel={_('Sync with Readest Cloud')}
-            />
-            {/* Third-party providers are premium: every row carries the tier
-                badge; on a free plan the checkbox is disabled and opening a
-                row routes to the upgrade page instead of the config sub-page. */}
-            {(appService?.isDesktopApp ||
-              appService?.isAndroidApp ||
-              appService?.isIOSApp ||
-              // Web: only when a Web-type GIS client id is configured for this build.
-              (isWebAppPlatform() && !!getGoogleWebClientId())) && (
+      {SHOW_PREMIUM_SURFACES && (
+        <div className='w-full' data-setting-id='settings.integrations.cloudSync'>
+          <SectionTitle className='mb-2'>{_('Cloud Sync')}</SectionTitle>
+          <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
+            <div
+              className='divide-base-200 divide-y'
+              role='radiogroup'
+              aria-label={_('Cloud sync provider')}
+            >
               <CloudProviderRow
-                icon={RiGoogleLine}
-                title={_('Google Drive')}
-                status={gdriveStatus}
-                badge={premiumBadge}
-                checked={!!settings.googleDrive?.enabled}
-                canToggle={canToggleCloudProvider({
-                  isPremium: isCloudSyncPremium,
-                  isConfigured: gdriveConfigured,
-                  isEnabled: !!settings.googleDrive?.enabled,
-                })}
-                onToggle={(next) => toggleCloudProvider('gdrive', next)}
-                onOpen={() =>
-                  isCloudSyncPremium ? setSubPage('gdrive') : navigateToProfile(router)
-                }
-                toggleLabel={_('Sync with Google Drive')}
+                icon={RiCloudFill}
+                title={_('Readest Cloud')}
+                status={readestStatus}
+                isActive={!!user && cloudProvider === 'readest'}
+                canActivate={!!user}
+                onActivate={() => activateCloudProvider('readest')}
+                onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
+                activateLabel={_('Use Readest Cloud')}
               />
-            )}
-            <CloudProviderRow
-              icon={RiCloudLine}
-              title={_('WebDAV')}
-              status={webdavStatus}
-              badge={premiumBadge}
-              checked={!!settings.webdav?.enabled}
-              canToggle={canToggleCloudProvider({
-                isPremium: isCloudSyncPremium,
-                isConfigured: webdavConfigured,
-                isEnabled: !!settings.webdav?.enabled,
-              })}
-              onToggle={(next) => toggleCloudProvider('webdav', next)}
-              onOpen={() => (isCloudSyncPremium ? setSubPage('webdav') : navigateToProfile(router))}
-              toggleLabel={_('Sync with WebDAV')}
-            />
-            <CloudProviderRow
-              icon={RiDatabase2Line}
-              title={_('S3 Storage')}
-              status={s3Status}
-              badge={premiumBadge}
-              checked={!!settings.s3?.enabled}
-              canToggle={canToggleCloudProvider({
-                isPremium: isCloudSyncPremium,
-                isConfigured: s3Configured,
-                isEnabled: !!settings.s3?.enabled,
-              })}
-              onToggle={(next) => toggleCloudProvider('s3', next)}
-              onOpen={() => (isCloudSyncPremium ? setSubPage('s3') : navigateToProfile(router))}
-              toggleLabel={_('Sync with S3')}
-            />
-            {(appService?.isDesktopApp ||
-              appService?.isAndroidApp ||
-              appService?.isIOSApp ||
-              // Web: only when a Web-type Microsoft client id is configured for this build.
-              (isWebAppPlatform() && !!getMicrosoftClientId())) && (
+              {/* Third-party providers are premium: every row carries the tier
+                  badge; on a free plan the radio is disabled and opening a row
+                  routes to the upgrade page instead of the config sub-page. */}
+              {(appService?.isDesktopApp ||
+                appService?.isAndroidApp ||
+                appService?.isIOSApp ||
+                // Web: only when a Web-type GIS client id is configured for this build.
+                (isWebAppPlatform() && !!getGoogleWebClientId())) && (
+                <CloudProviderRow
+                  icon={RiGoogleLine}
+                  title={_('Google Drive')}
+                  status={gdriveStatus}
+                  badge={_('Premium')}
+                  isActive={activeCloudKind === 'gdrive'}
+                  canActivate={isCloudSyncPremium && gdriveConfigured}
+                  onActivate={() => activateCloudProvider('gdrive')}
+                  onOpen={() =>
+                    isCloudSyncPremium ? setSubPage('gdrive') : navigateToProfile(router)
+                  }
+                  activateLabel={_('Use Google Drive')}
+                />
+              )}
               <CloudProviderRow
-                icon={RiMicrosoftLine}
-                title={_('OneDrive')}
-                status={onedriveStatus}
-                badge={premiumBadge}
-                checked={!!settings.onedrive?.enabled}
-                canToggle={canToggleCloudProvider({
-                  isPremium: isCloudSyncPremium,
-                  isConfigured: onedriveConfigured,
-                  isEnabled: !!settings.onedrive?.enabled,
-                })}
-                onToggle={(next) => toggleCloudProvider('onedrive', next)}
+                icon={RiCloudLine}
+                title={_('WebDAV')}
+                status={webdavStatus}
+                badge={_('Premium')}
+                isActive={activeCloudKind === 'webdav'}
+                canActivate={isCloudSyncPremium && webdavConfigured}
+                onActivate={() => activateCloudProvider('webdav')}
                 onOpen={() =>
-                  isCloudSyncPremium ? setSubPage('onedrive') : navigateToProfile(router)
+                  isCloudSyncPremium ? setSubPage('webdav') : navigateToProfile(router)
                 }
-                toggleLabel={_('Sync with OneDrive')}
+                activateLabel={_('Use WebDAV')}
               />
-            )}
+              <CloudProviderRow
+                icon={RiDatabase2Line}
+                title={_('S3 Storage')}
+                status={s3Status}
+                badge={_('Premium')}
+                isActive={activeCloudKind === 's3'}
+                canActivate={isCloudSyncPremium && s3Configured}
+                onActivate={() => activateCloudProvider('s3')}
+                onOpen={() => (isCloudSyncPremium ? setSubPage('s3') : navigateToProfile(router))}
+                activateLabel={_('Use S3')}
+              />
+            </div>
           </div>
         </div>
-        {providers.length === 0 && (
-          <div className='mt-5'>
-            <Tips>
-              <li>
-                {_(
-                  'Library sync is off. Your books, progress, and annotations stay on this device.',
-                )}
-              </li>
-              <li>
-                {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
-                )}
-              </li>
-            </Tips>
-          </div>
-        )}
-      </div>
+      )}
 
       <div className='w-full' data-setting-id='settings.integrations.catalogs'>
         <SectionTitle className='mb-2'>{_('Content Sources')}</SectionTitle>
@@ -617,12 +566,14 @@ const IntegrationsPanel: React.FC = () => {
               status={opdsStatus}
               onClick={() => setSubPage('opds')}
             />
-            <IntegrationRow
-              icon={RiSendPlaneLine}
-              title={_('Send to Readest')}
-              status={_('Email books to your library')}
-              onClick={() => setSubPage('send')}
-            />
+            {SHOW_PREMIUM_SURFACES && (
+              <IntegrationRow
+                icon={RiSendPlaneLine}
+                title={_('Send to Readest')}
+                status={_('Email books to your library')}
+                onClick={() => setSubPage('send')}
+              />
+            )}
           </div>
         </div>
       </div>
