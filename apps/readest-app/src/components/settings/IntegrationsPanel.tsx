@@ -105,19 +105,17 @@ const IntegrationsPanel: React.FC = () => {
   const gdriveLastError = useFileSyncStore((s) => s.lastErrorByKind.gdrive);
   const s3LastError = useFileSyncStore((s) => s.lastErrorByKind.s3);
   const onedriveLastError = useFileSyncStore((s) => s.lastErrorByKind.onedrive);
-  // Third-party cloud sync will be a premium feature (any paid plan), but it is
-  // temporarily UNGATED while the feature stabilises — `isCloudSyncAllowed`
-  // returns true for every plan until `CLOUD_SYNC_REQUIRES_PREMIUM` is flipped
-  // back on. The `?? 'free'` keeps the (re-gated) loading state non-premium.
+  // The build policy decides whether personal third-party storage is plan-gated.
+  // This fork keeps it available to every plan while retaining the upstream
+  // plan-aware access path.
   const { userProfilePlan } = useQuotaStats();
-  const isCloudSyncPremium = isCloudSyncAllowed(userProfilePlan ?? 'free');
-  // Only surface the tier chip to users who cannot use the feature yet — signed
-  // out (known immediately), or signed in on a plan without cloud sync (known
-  // once the plan resolves). An entitled user already has it, so the badge is
-  // noise. Suppressing it while a signed-in user's plan is still loading avoids
-  // flashing the chip at a premium user on every open.
+  const isCloudSyncAllowedForPlan = isCloudSyncAllowed(userProfilePlan ?? 'free');
+  // Only surface the tier chip when the active build policy denies access.
+  // Suppress it while a signed-in user's plan is still loading.
   const premiumBadge =
-    !user || (userProfilePlan !== undefined && !isCloudSyncPremium) ? _('Premium') : undefined;
+    !isCloudSyncAllowedForPlan && (!user || userProfilePlan !== undefined)
+      ? _('Premium')
+      : undefined;
 
   const [subPage, setSubPage] = useState<SubPage>(null);
 
@@ -168,9 +166,9 @@ const IntegrationsPanel: React.FC = () => {
       setRequestedSubPage(null);
       return;
     }
-    // Cloud-sync sub-pages are premium-gated. If the plan is still loading, wait
-    // (don't consume the request); once known, only honor it for paid plans.
-    if (isCloudRequest && !isCloudSyncPremium) {
+    // If the active build policy gates cloud sync, wait for a loading plan and
+    // only honor the request once access is known.
+    if (isCloudRequest && !isCloudSyncAllowedForPlan) {
       if (userProfilePlan === undefined) return;
       setRequestedSubPage(null);
       return;
@@ -193,7 +191,7 @@ const IntegrationsPanel: React.FC = () => {
       setSubPage('gdrive');
     }
     setRequestedSubPage(null);
-  }, [requestedSubPage, setRequestedSubPage, isCloudSyncPremium, userProfilePlan]);
+  }, [requestedSubPage, setRequestedSubPage, isCloudSyncAllowedForPlan, userProfilePlan]);
 
   // Sub-page wrapper matches the list-view's `my-4 w-full` so the
   // SubPageHeader's "Integrations" label lands at the exact same Y position
@@ -560,13 +558,13 @@ const IntegrationsPanel: React.FC = () => {
                   badge={premiumBadge}
                   checked={!!settings.googleDrive?.enabled}
                   canToggle={canToggleCloudProvider({
-                    isPremium: isCloudSyncPremium,
+                    isPremium: isCloudSyncAllowedForPlan,
                     isConfigured: gdriveConfigured,
                     isEnabled: !!settings.googleDrive?.enabled,
                   })}
                   onToggle={(next) => toggleCloudProvider('gdrive', next)}
                   onOpen={() =>
-                    isCloudSyncPremium ? setSubPage('gdrive') : navigateToProfile(router)
+                    isCloudSyncAllowedForPlan ? setSubPage('gdrive') : navigateToProfile(router)
                   }
                   toggleLabel={_('Sync with Google Drive')}
                 />
@@ -578,13 +576,13 @@ const IntegrationsPanel: React.FC = () => {
                 badge={premiumBadge}
                 checked={!!settings.webdav?.enabled}
                 canToggle={canToggleCloudProvider({
-                  isPremium: isCloudSyncPremium,
+                  isPremium: isCloudSyncAllowedForPlan,
                   isConfigured: webdavConfigured,
                   isEnabled: !!settings.webdav?.enabled,
                 })}
                 onToggle={(next) => toggleCloudProvider('webdav', next)}
                 onOpen={() =>
-                  isCloudSyncPremium ? setSubPage('webdav') : navigateToProfile(router)
+                  isCloudSyncAllowedForPlan ? setSubPage('webdav') : navigateToProfile(router)
                 }
                 toggleLabel={_('Sync with WebDAV')}
               />
@@ -595,12 +593,14 @@ const IntegrationsPanel: React.FC = () => {
                 badge={premiumBadge}
                 checked={!!settings.s3?.enabled}
                 canToggle={canToggleCloudProvider({
-                  isPremium: isCloudSyncPremium,
+                  isPremium: isCloudSyncAllowedForPlan,
                   isConfigured: s3Configured,
                   isEnabled: !!settings.s3?.enabled,
                 })}
                 onToggle={(next) => toggleCloudProvider('s3', next)}
-                onOpen={() => (isCloudSyncPremium ? setSubPage('s3') : navigateToProfile(router))}
+                onOpen={() =>
+                  isCloudSyncAllowedForPlan ? setSubPage('s3') : navigateToProfile(router)
+                }
                 toggleLabel={_('Sync with S3')}
               />
               {(appService?.isDesktopApp ||
@@ -615,13 +615,13 @@ const IntegrationsPanel: React.FC = () => {
                   badge={premiumBadge}
                   checked={!!settings.onedrive?.enabled}
                   canToggle={canToggleCloudProvider({
-                    isPremium: isCloudSyncPremium,
+                    isPremium: isCloudSyncAllowedForPlan,
                     isConfigured: onedriveConfigured,
                     isEnabled: !!settings.onedrive?.enabled,
                   })}
                   onToggle={(next) => toggleCloudProvider('onedrive', next)}
                   onOpen={() =>
-                    isCloudSyncPremium ? setSubPage('onedrive') : navigateToProfile(router)
+                    isCloudSyncAllowedForPlan ? setSubPage('onedrive') : navigateToProfile(router)
                   }
                   toggleLabel={_('Sync with OneDrive')}
                 />

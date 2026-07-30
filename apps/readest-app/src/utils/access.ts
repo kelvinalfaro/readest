@@ -18,16 +18,10 @@ export const getSubscriptionPlan = (token: string): UserPlan => {
   return data['plan'] || 'free';
 };
 
-export const getUserProfilePlan = (token: string): UserPlan => {
-  const data = jwtDecode<Token>(token) || {};
-  let plan = data['plan'] || 'free';
-  if (plan === 'free') {
-    const purchasedQuota = data['storage_purchased_bytes'] || 0;
-    if (purchasedQuota > 0) {
-      plan = 'purchase';
-    }
-  }
-  return plan;
+// Temporary fork override: preserve the token-shaped API while plan decoding is
+// intentionally bypassed. Revisit this separately from local-device feature gates.
+export const getUserProfilePlan = (_token: string): UserPlan => {
+  return 'pro';
 };
 
 /**
@@ -57,20 +51,16 @@ export const isCloudSyncInPlan = (plan: UserPlan): boolean =>
   (CLOUD_SYNC_PLANS as readonly UserPlan[]).includes(plan);
 
 /**
- * Master switch for the third-party cloud-sync premium paywall. ON: cloud
- * sync (WebDAV / Google Drive / S3) requires a {@link CLOUD_SYNC_PLANS} plan —
- * free users see the provider rows with a Premium badge and an upgrade route
- * instead of the config sub-pages, and a downgraded account's still-selected
- * provider is paused (never a silent fallback to Readest Cloud uploads, #4959).
- * Every gate goes through {@link isCloudSyncAllowed}, so this flag is the
- * whole toggle.
+ * Build policy for the third-party cloud-sync premium paywall. This self-built
+ * fork keeps personal storage providers available to every plan. The plan list
+ * and gate remain intact so upstream policy can still be represented without
+ * changing JWT claims or Readest-hosted service entitlements.
  */
-export const CLOUD_SYNC_REQUIRES_PREMIUM = true;
+export const CLOUD_SYNC_REQUIRES_PREMIUM = false;
 
 /**
- * Whether third-party cloud sync is available for a plan. Falls back to the
- * {@link isCloudSyncInPlan} paywall while {@link CLOUD_SYNC_REQUIRES_PREMIUM}
- * is on; flipping the switch off ungates every plan.
+ * Whether third-party cloud sync is available for a plan. When the build policy
+ * enables the paywall, access falls back to {@link isCloudSyncInPlan}.
  */
 export const isCloudSyncAllowed = (plan: UserPlan): boolean =>
   !CLOUD_SYNC_REQUIRES_PREMIUM || isCloudSyncInPlan(plan);
@@ -87,13 +77,12 @@ export const isTTSCacheInPlan = (plan: UserPlan): boolean =>
   (TTS_CACHE_PLANS as readonly UserPlan[]).includes(plan);
 
 /**
- * Master switch for the offline-audio premium paywall, mirroring
- * {@link CLOUD_SYNC_REQUIRES_PREMIUM}. ON: pre-downloading TTS audio requires a
- * {@link TTS_CACHE_PLANS} plan. Flipping it off ungates every plan. The
- * automatic playback cache (audio kept as the user listens) is unaffected —
- * only the explicit download UI is gated.
+ * Build policy for the offline-audio premium paywall, mirroring
+ * {@link CLOUD_SYNC_REQUIRES_PREMIUM}. This self-built fork allows every plan
+ * to pre-download generated Read Aloud audio for local offline playback. This
+ * switch does not change server-side TTS availability or quotas.
  */
-export const TTS_CACHE_REQUIRES_PREMIUM = true;
+export const TTS_CACHE_REQUIRES_PREMIUM = false;
 
 export const isTTSCacheAllowed = (plan: UserPlan): boolean =>
   !TTS_CACHE_REQUIRES_PREMIUM || isTTSCacheInPlan(plan);

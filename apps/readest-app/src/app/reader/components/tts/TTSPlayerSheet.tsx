@@ -129,17 +129,15 @@ const TTSPlayerSheet = ({
   const progress = useBookProgress(bookKey);
   const viewSettings = getViewSettings(bookKey);
 
-  // Offline audio (pre-downloading Read Aloud audio per chapter) is a premium
-  // feature: any paid plan can use it; free / signed-out users see the row with
-  // a Premium badge that routes to the upgrade page instead of the per-chapter
-  // download controls. Mirrors the cloud-sync paywall in IntegrationsPanel.
+  // The build policy decides whether offline audio is plan-gated. Keeping the
+  // decision in isTTSCacheAllowed supports both upstream policy and this fork's
+  // all-plan local-download policy.
   const { userProfilePlan } = useQuotaStats();
-  const isDownloadPremium = isTTSCacheAllowed(userProfilePlan ?? 'free');
-  // Only badge users who can't use it yet: signed out (known at once), or a
-  // resolved plan without the feature. Suppress it while a signed-in user's
-  // plan is still loading so it never flashes at an entitled user.
+  const isDownloadAllowed = isTTSCacheAllowed(userProfilePlan ?? 'free');
+  // Only badge users who cannot use it under the active build policy. Suppress
+  // the badge while a signed-in user's plan is still loading.
   const premiumBadge =
-    !user || (userProfilePlan !== undefined && !isDownloadPremium) ? _('Premium') : undefined;
+    !isDownloadAllowed && (!user || userProfilePlan !== undefined) ? _('Premium') : undefined;
 
   const [view, setView] = useState<SheetView>('main');
   const [voiceGroups, setVoiceGroups] = useState<TTSVoicesGroup[]>([]);
@@ -229,11 +227,10 @@ const TTSPlayerSheet = ({
     setView('main');
   };
 
-  // Entitled users drill into the per-chapter download view; everyone else is
-  // routed to the upgrade page (or sign-in), the sheet closing first so the
-  // navigation isn't hidden behind it.
+  // Allowed users drill into the per-chapter download view. If a future build
+  // restores plan gating, disallowed users retain the upgrade/sign-in route.
   const handleOpenDownloads = () => {
-    if (isDownloadPremium) {
+    if (isDownloadAllowed) {
       setView('chapters');
     } else if (user) {
       onClose();
