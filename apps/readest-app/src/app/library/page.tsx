@@ -15,7 +15,7 @@ import {
   selectNewImportableFiles,
 } from '@/services/bookService';
 import { navigateToLibrary, navigateToLogin, navigateToReader } from '@/utils/nav';
-import { getCoverFilename, getBookWithUpdatedMetadata, listFormater } from '@/utils/book';
+import { getBookWithUpdatedMetadata, listFormater } from '@/utils/book';
 import { getImportErrorMessage } from '@/services/errors';
 import { ingestFile } from '@/services/ingestService';
 import { eventDispatcher } from '@/utils/event';
@@ -49,6 +49,7 @@ import { useInboxDrainer } from '@/hooks/useInboxDrainer';
 import { useOPDSSubscriptions } from '@/hooks/useOPDSSubscriptions';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useTransferStore } from '@/store/transferStore';
+import { useScreenWakeLock } from '@/hooks/useScreenWakeLock';
 import { useBackgroundTexture } from '@/hooks/useBackgroundTexture';
 import { getLibraryViewSettings } from '@/helpers/settings';
 import { useAppUrlIngress } from '@/hooks/useAppUrlIngress';
@@ -80,7 +81,7 @@ import { CatalogDialog } from './components/OPDSDialog';
 import { FeedsView } from './components/feeds/FeedsView';
 import AddFeedModal from './components/feeds/AddFeedModal';
 import { fetchAndParseFeed } from '@/services/rss/feedClient';
-import { createFeedBook, generateFeedCoverSvg, rasterizeCoverSvg } from '@/services/rss/feedBook';
+import { createFeedBook, ensureFeedBookCover } from '@/services/rss/feedBook';
 import { MigrateDataWindow } from './components/MigrateDataWindow';
 import { BackupWindow } from './components/BackupWindow';
 import { CacheManagerWindow } from './components/CacheManagerWindow';
@@ -98,17 +99,18 @@ import Spinner from '@/components/Spinner';
 import LibraryHeader from './components/LibraryHeader';
 import Bookshelf from './components/Bookshelf';
 import LibraryEmptyState from './components/LibraryEmptyState';
+import ImportMenuPopup from './components/ImportMenuPopup';
 import GroupHeader from './components/GroupHeader';
 import FailedImportsDialog, { FailedImport } from './components/FailedImportsDialog';
 import ImportFromFolderDialog, {
   ImportFromFolderResult,
 } from './components/ImportFromFolderDialog';
 import ImportFromUrlDialog from './components/ImportFromUrlDialog';
+import ImportNovelDialog from './components/ImportNovelDialog';
 import NowPlayingBar from './components/NowPlayingBar';
 import { ttsSessionManager } from '@/services/tts';
-import { convertToEpubWithWorker } from '@/services/send/conversion/conversionWorker';
-import { getClipOptions } from '@/services/send/clipOptions';
-import { invoke } from '@tauri-apps/api/core';
+import { clipPageWithSignInFallback } from '@/services/send/clipSignIn';
+import ClipSignInAlert from '@/components/ClipSignInAlert';
 import useShortcuts from '@/hooks/useShortcuts';
 import { useReplicaPull } from '@/hooks/useReplicaPull';
 import { useCustomFonts } from '@/hooks/useCustomFonts';
@@ -214,6 +216,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   const [showFeeds, setShowFeeds] = useState(false);
   const [showAddFeed, setShowAddFeed] = useState(false);
   const [showImportFromUrl, setShowImportFromUrl] = useState(false);
+  const [showImportNovel, setShowImportNovel] = useState(false);
+  const [importMenuAnchor, setImportMenuAnchor] = useState<HTMLElement | null>(null);
   const [loading, setLoading] = useState(false);
   // Seed from the library store: if we already have books in memory (the
   // common reader → library return path), treat the page as loaded
@@ -382,7 +386,6 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     async () => handlePullToRefreshSync(false),
     async () => handlePullToRefreshSync(true),
   );
-
   useEffect(() => {
     if (!libraryLoaded || !appService) return;
     if (!hasEnabledCWASubscriptions(useSettingsStore.getState().settings)) return;
@@ -577,7 +580,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           const temp = appService.isMobile ? false : !settings.autoImportBooksOnOpen;
           // A file shared into Readest on mobile (the OS share-sheet) is a
           // "Send to Readest" capture — force it to the cloud so it syncs to
-          // every device. Desktop "open with" keeps the autoUpload setting.
+          // every device. Desktop "open with" honors the book sync toggle.
           const book = await ingestFile(
             {
               file,
@@ -637,15 +640,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     const parsed = await fetchAndParseFeed(url);
     const book = createFeedBook(url, parsed);
     if (appService) {
-      try {
-        const cover = generateFeedCoverSvg(url, book.title);
-        const pngBytes = await rasterizeCoverSvg(cover);
-        await appService.createDir(book.hash, 'Books', true);
-        await appService.writeFile(getCoverFilename(book), 'Books', pngBytes);
-        book.coverImageUrl = await appService.generateCoverImageUrl(book);
-      } catch (e) {
-        console.warn('Failed to generate feed book cover:', e);
-      }
+      book.coverImageUrl = await ensureFeedBookCover(appService, book);
     }
     await useLibraryStore.getState().updateBooks(envConfig, [book]);
     eventDispatcher.dispatch('toast', {
@@ -1190,20 +1185,15 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     // a hidden Tauri webview, loads the URL with the real browser engine
     // (correct TLS fingerprint, runs the page's JS, executes any
     // Cloudflare challenge), then captures `document.documentElement
-    // .outerHTML` and returns it. End to end this is exactly the local-
-    // file path — no inbox, no upload-then-download, no server round-trip
-    // — `importBooks` is the same call drag-drop uses.
+    // .outerHTML` and returns it. On a login wall the helper offers an
+    // interactive sign-in + manual capture (mobile). End to end this is
+    // exactly the local-file path — no inbox, no upload-then-download, no
+    // server round-trip — `importBooks` is the same call drag-drop uses.
     if (!isTauriAppPlatform()) return;
     console.log('[clip] start', { url });
     setIsSelectMode(false);
-    const t0 = performance.now();
-    const html = await invoke<string>('clip_url', { url, options: getClipOptions(_) });
-    console.log('[clip] fetched', {
-      bytes: html.length,
-      ms: Math.round(performance.now() - t0),
-    });
     const t1 = performance.now();
-    const book = await convertToEpubWithWorker({ kind: 'page', html, url });
+    const book = await clipPageWithSignInFallback(url, _, appService);
     console.log('[clip] epub built', {
       title: book.title,
       author: book.author || undefined,
@@ -1214,6 +1204,15 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     console.log('[clip] importing locally', { name: book.file.name, groupId: groupId || null });
     await importBooks([{ file: book.file }], groupId);
     console.log('[clip] done');
+  };
+
+  // The dialog fetches the chapter list and assembles the EPUB itself
+  // (with its own progress/cancel UI) — from here on the built file takes
+  // exactly the local-file import path, same as a clipped page.
+  const handleImportNovelFile = async (file: File) => {
+    setIsSelectMode(false);
+    const groupId = searchParams?.get('group') || '';
+    await importBooks([{ file }], groupId);
   };
 
   const handleImportBooksFromDirectory = async (dirPath?: string) => {
@@ -1628,6 +1627,9 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
           }
           onImportBookFromUrl={isTauriAppPlatform() ? () => setShowImportFromUrl(true) : undefined}
           onOpenCWALibrary={handleOpenCWALibrary}
+          onImportBookFromNovelUrl={
+            isTauriAppPlatform() ? () => setShowImportNovel(true) : undefined
+          }
           onOpenCatalogManager={handleShowOPDSDialog}
           onOpenFeeds={handleShowFeeds}
           onToggleSelectMode={() => handleSetSelectMode(!isSelectMode)}
@@ -1712,7 +1714,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
                 isSelectAll={isSelectAll}
                 isSelectNone={isSelectNone}
                 onScrollerRef={handleScrollerRef}
-                handleImportBooks={handleImportBooksFromFiles}
+                handleImportBooks={setImportMenuAnchor}
                 handleBookUpload={handleBookUpload}
                 handleBookDownload={handleBookDownload}
                 handleBookDelete={handleBookDelete('both')}
@@ -1728,9 +1730,25 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         ) : (
           <div className='hero drop-zone h-screen items-center justify-center'>
             <DropIndicator />
-            <LibraryEmptyState onImport={handleImportBooksFromFiles} />
+            <LibraryEmptyState onImport={setImportMenuAnchor} />
           </div>
         ))}
+      {importMenuAnchor && (
+        <ImportMenuPopup
+          anchor={importMenuAnchor}
+          onClose={() => setImportMenuAnchor(null)}
+          onImportBooksFromFiles={handleImportBooksFromFiles}
+          onImportBooksFromDirectory={
+            appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
+          }
+          onImportBookFromUrl={isTauriAppPlatform() ? () => setShowImportFromUrl(true) : undefined}
+          onImportBookFromNovelUrl={
+            isTauriAppPlatform() ? () => setShowImportNovel(true) : undefined
+          }
+          onOpenCatalogManager={handleShowOPDSDialog}
+          onOpenFeeds={handleShowFeeds}
+        />
+      )}
       <NowPlayingBar isSelectMode={isSelectMode} />
       {showDetailsBook && (
         <BookDetailModal
@@ -1825,6 +1843,12 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         onClose={() => setShowImportFromUrl(false)}
         onSubmit={handleImportBookFromUrl}
       />
+      <ImportNovelDialog
+        isOpen={showImportNovel}
+        onClose={() => setShowImportNovel(false)}
+        onImport={handleImportNovelFile}
+      />
+      <ClipSignInAlert />
       <Toast />
     </div>
   );

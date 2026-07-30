@@ -60,6 +60,7 @@ import { findExistingBookForPublication } from './utils/findExistingBook';
 import Dialog from '@/components/Dialog';
 import { addCWABookSource, getCWASettings, resolveCWAUrl } from '@/services/cwa';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
+import { uniqueId } from '@/utils/misc';
 
 type ViewMode = 'feed' | 'publication' | 'search' | 'loading' | 'error';
 
@@ -647,13 +648,7 @@ export default function BrowserPage() {
                 downloadedAt: Date.now(),
               });
             }
-            if (
-              user &&
-              book &&
-              !book.uploadedAt &&
-              settings.autoUpload &&
-              isReadestCloudStorageActive(settings)
-            ) {
+            if (user && book && !book.uploadedAt && isReadestCloudStorageActive(settings)) {
               setTimeout(() => {
                 transferManager.queueUpload(book);
               }, 3000);
@@ -671,16 +666,7 @@ export default function BrowserPage() {
         throw e;
       }
     },
-    [
-      user,
-      state.baseURL,
-      appService,
-      libraryLoaded,
-      settings.autoUpload,
-      catalogSourceId,
-      cwaSubscription,
-      publication,
-    ],
+    [user, state.baseURL, appService, libraryLoaded, catalogSourceId, cwaSubscription, publication],
   );
 
   const handleStream = useCallback(

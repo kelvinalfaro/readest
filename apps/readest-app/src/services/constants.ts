@@ -153,7 +153,6 @@ export const DEFAULT_ONEDRIVE_SETTINGS = {
 
 export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   keepLogin: false,
-  autoUpload: true,
   alwaysOnTop: false,
   openBookInNewWindow: true,
   alwaysShowStatusBar: false,
@@ -187,6 +186,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   libraryCoverFit: 'crop',
   libraryAutoColumns: true,
   libraryColumns: 6,
+  librarySkeuomorphicCovers: false,
   libraryRecentShelfEnabled: false,
 
   metadataSeriesCollapsed: false,

@@ -51,6 +51,42 @@ describe('makeMarkdownBook', () => {
     expect(book.toc[1]!.href).toBe('1#two');
   });
 
+  it('nests every heading level down to H6 in the TOC (issue #5357)', async () => {
+    const book = await make(
+      '# L1\n\na\n\n## L2\n\nb\n\n### L3\n\nc\n\n#### L4\n\nd\n\n##### L5\n\ne\n\n###### L6\n\nf\n',
+    );
+    const chain: string[] = [];
+    let level: BookDoc['toc'] = book.toc;
+    while (level?.length) {
+      chain.push(level[0]!.label!);
+      level = level[0]!.subitems;
+    }
+    expect(chain).toEqual(['L1', 'L2', 'L3', 'L4', 'L5', 'L6']);
+    // Deep headings must also carry the anchor id their TOC href points at.
+    const doc = await book.sections[0]!.createDocument();
+    for (const item of flattenToc(book.toc)) {
+      expect(doc.getElementById(item.href.split('#')[1]!)).not.toBeNull();
+    }
+  });
+
+  it('deepens the TOC without changing the rendered markup', async () => {
+    // Deeper TOC nesting must stay a TOC-only change: the chapter split still
+    // happens at H1 only, and every heading keeps the tag, order and text
+    // `marked` produced. The lone addition is the anchor id the TOC href needs.
+    const book = await make('# L1\n\na\n\n## L2\n\nb\n\n#### L4\n\nc\n');
+    expect(book.sections.length).toBe(1);
+    const html = (await book.sections[0]!.loadText!())!;
+    const body = html.slice(html.indexOf('<body>') + '<body>'.length, html.lastIndexOf('</body>'));
+    const markup = body.replace(/ xmlns="[^"]*"/g, '').replace(/ id="[^"]*"/g, '');
+    expect(markup).toBe('<h1>L1</h1>\n<p>a</p>\n<h2>L2</h2>\n<p>b</p>\n<h4>L4</h4>\n<p>c</p>\n');
+  });
+
+  it('nests a skipped heading level under its nearest ancestor', async () => {
+    const book = await make('# L1\n\na\n\n#### L4\n\nb\n\n## L2\n\nc\n');
+    expect(book.toc.length).toBe(1);
+    expect(book.toc[0]!.subitems!.map((i) => i.label)).toEqual(['L4', 'L2']);
+  });
+
   it('treats content before the first H1 as a leading preamble section', async () => {
     const book = await make('Intro text.\n\n# Only\n\nbody\n');
     expect(book.sections.length).toBe(2);
@@ -134,6 +170,75 @@ describe('makeMarkdownBook', () => {
     expect(h1.metadata.title).toBe('The Heading');
     const fn = await make('just text\n', 'My Notes.md');
     expect(fn.metadata.title).toBe('My Notes');
+  });
+
+  // Issue #5279: the two frontmatter shapes the reporter attached, each pairing
+  // a cover with an ISBN. The library reads both off BookDoc.metadata, and the
+  // importer writes whatever getCover() returns as the book's cover file.
+  it('carries a base64 cover and an ISBN from frontmatter into the book', async () => {
+    const gif = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+    const book = await make(`---\ncover: ${gif}\nISBN: 979-8985322538\n---\n\n# YAML MD Test\n`);
+    expect(book.metadata.isbn).toBe('979-8985322538');
+    // With no explicit identifier, the ISBN becomes one, so the same book
+    // imported from another copy of the file lands on the same metaHash.
+    expect(book.metadata.identifier).toBe('979-8985322538');
+    expect(book.metadata.coverImageUrl).toBeUndefined();
+    const cover = await book.getCover();
+    expect(cover).toBeInstanceOf(Blob);
+    expect(cover!.type).toBe('image/gif');
+    expect(cover!.size).toBe(42);
+  });
+
+  it('carries an http cover URL from frontmatter without fetching it', async () => {
+    const url = 'https://m.media-amazon.com/images/I/71JB5kFNJ5L._SL1500_.jpg';
+    const book = await make(`---\ncover: ${url}\nISBN: 979-8985322538\n---\n\n# YAML MD Test\n`);
+    expect(book.metadata.coverImageUrl).toBe(url);
+    expect(await book.getCover()).toBeNull();
+  });
+
+  it('lifts the remaining book details out of frontmatter', async () => {
+    const book = await make(
+      [
+        '---',
+        'title: Moby Dick',
+        'subtitle: The Whale',
+        'author:',
+        '  - Herman Melville',
+        '  - Someone Else',
+        'language: fr',
+        'publisher: Harper',
+        'published: 1851-10-18',
+        'description: A whale of a book',
+        'tags: [fiction, classics]',
+        'series: Sea Tales',
+        'series_index: 2',
+        'identifier: urn:uuid:abcd',
+        '---',
+        '',
+        '# Chapter One',
+      ].join('\n'),
+    );
+    expect(book.metadata).toMatchObject({
+      title: 'Moby Dick',
+      subtitle: 'The Whale',
+      author: ['Herman Melville', 'Someone Else'],
+      language: 'fr',
+      publisher: 'Harper',
+      published: '1851-10-18',
+      description: 'A whale of a book',
+      subject: ['fiction', 'classics'],
+      series: 'Sea Tales',
+      seriesIndex: 2,
+      identifier: 'urn:uuid:abcd',
+    });
+  });
+
+  it('keeps the pre-frontmatter defaults when there is none, so hashes are stable', async () => {
+    const book = await make('# The Heading\n\nbody\n', 'My Notes.md');
+    expect(book.metadata.identifier).toBe('My Notes.md');
+    expect(book.metadata.language).toBe('en');
+    expect(book.metadata.author).toBe('');
+    expect(await book.getCover()).toBeNull();
   });
 
   it('creates object URLs lazily and revokes every one on destroy', async () => {

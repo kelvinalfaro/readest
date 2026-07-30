@@ -360,7 +360,6 @@ export interface SystemSettings {
   autoImportFolders?: string[];
 
   keepLogin: boolean;
-  autoUpload: boolean;
   alwaysOnTop: boolean;
   openBookInNewWindow: boolean;
   autoCheckUpdates: boolean;
@@ -394,6 +393,7 @@ export interface SystemSettings {
   libraryCoverFit: LibraryCoverFitType;
   libraryAutoColumns: boolean;
   libraryColumns: number;
+  librarySkeuomorphicCovers: boolean;
   /** Show the recently-read carousel at the top of the library (issue #3797). */
   libraryRecentShelfEnabled: boolean;
   /**

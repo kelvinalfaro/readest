@@ -1,8 +1,9 @@
 import React from 'react';
-import { MdRadioButtonChecked, MdClose, MdAdd, MdPlayCircleOutline } from 'react-icons/md';
+import { MdClose, MdPlayCircleOutline } from 'react-icons/md';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { BoxedList, SectionTitle, SettingsRow, SettingsSelect } from '../primitives';
+import { PiPlus } from 'react-icons/pi';
 
 interface Texture {
   id: string;
@@ -48,7 +49,7 @@ const BackgroundTextureSelector: React.FC<BackgroundTextureSelectorProps> = ({
   return (
     <div>
       <SectionTitle className='mb-2'>{title}</SectionTitle>
-      <div className='mb-4 grid grid-cols-2 gap-4'>
+      <div className='mb-4 grid grid-cols-3 gap-4'>
         {allTextures.map((texture) => (
           // The swatch is a div (not a <button>) so the inner Delete
           // <button> can nest legally — interactive elements can't be
@@ -71,7 +72,7 @@ const BackgroundTextureSelector: React.FC<BackgroundTextureSelectorProps> = ({
             // light mode). Guaranteed contrast against any texture image.
             // Inactive cards keep `border-base-300` so the slot doesn't
             // shift on selection change.
-            className={`bg-base-100 relative flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 p-4 shadow-md transition-colors ${
+            className={`bg-base-100 relative flex cursor-pointer flex-col items-start justify-between rounded-lg border-2 p-3 shadow-md transition-colors ${
               selectedTextureId === texture.id ? 'border-base-content' : 'border-base-300'
             }`}
             style={{
@@ -81,12 +82,6 @@ const BackgroundTextureSelector: React.FC<BackgroundTextureSelectorProps> = ({
               minHeight: '80px',
             }}
           >
-            {selectedTextureId === texture.id && (
-              <MdRadioButtonChecked
-                size={iconSize24}
-                className='absolute right-2 top-2 rounded-full bg-white text-indigo-500'
-              />
-            )}
             {texture.animated && (
               <MdPlayCircleOutline
                 size={iconSize24}
@@ -107,26 +102,13 @@ const BackgroundTextureSelector: React.FC<BackgroundTextureSelectorProps> = ({
             )}
           </div>
         ))}
-
-        {/* Custom Image Upload */}
-        <div
-          className='border-base-300 relative flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-4 shadow-md transition-all'
-          style={{ minHeight: '80px' }}
+        <button
+          className='relative flex cursor-pointer flex-col gap-1 items-center justify-end rounded-lg border border-dashed p-3 shadow-md'
+          onClick={onImportImage}
         >
-          <button
-            className='card-body flex cursor-pointer items-center justify-center p-2 text-center'
-            onClick={onImportImage}
-          >
-            <div className='flex items-center gap-2'>
-              <div className='flex items-center justify-center'>
-                <MdAdd className='text-primary/85 group-hover:text-primary h-6 w-6' />
-              </div>
-              <div className='text-primary/85 group-hover:text-primary line-clamp-1 font-medium'>
-                {_('Import Image')}
-              </div>
-            </div>
-          </button>
-        </div>
+          <PiPlus size={iconSize24} />
+          <span className='max-w-full truncate font-semibold'>{_('Import Image')}</span>
+        </button>
       </div>
 
       {/* Background Image Settings — boxed list once a texture is selected */}

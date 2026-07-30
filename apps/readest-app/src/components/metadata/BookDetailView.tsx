@@ -26,6 +26,7 @@ import {
   formatPublisher,
   formatTitle,
 } from '@/utils/book';
+import { isFeedBook } from '@/services/rss/feedBookUrl';
 import { saveSysSettings } from '@/helpers/settings';
 import BookCover from '@/components/BookCover';
 import Dropdown from '../Dropdown';
@@ -88,7 +89,7 @@ const BookDetailView: React.FC<BookDetailViewProps> = ({
     <div className='relative w-full rounded-lg'>
       <div className='mb-6 me-4 flex h-32 items-start'>
         <div className='me-6 aspect-[28/41] h-32 shadow-lg sm:me-10'>
-          <BookCover mode='list' book={book} />
+          <BookCover mode='list' book={book} showSpine={settings.librarySkeuomorphicCovers} />
         </div>
         <div className='title-author flex h-32 flex-col justify-between'>
           <div>
@@ -114,7 +115,8 @@ const BookDetailView: React.FC<BookDetailViewProps> = ({
                 <MdOutlineCloudDownload className='fill-base-content' />
               </button>
             )}
-            {book.downloadedAt && onUpload && (
+            {/* A feed book is fileless — there is nothing to push (#5307). */}
+            {book.downloadedAt && !isFeedBook(book) && onUpload && (
               <button onClick={onUpload} title={_('Upload to Cloud')}>
                 <MdOutlineCloudUpload className='fill-base-content' />
               </button>

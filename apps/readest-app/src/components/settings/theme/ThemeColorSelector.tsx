@@ -1,5 +1,4 @@
 import React from 'react';
-import { MdRadioButtonUnchecked, MdRadioButtonChecked } from 'react-icons/md';
 import { PiPlus } from 'react-icons/pi';
 import { Theme } from '@/styles/themes';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -48,12 +47,13 @@ const ThemeColorSelector: React.FC<ThemeColorSelectorProps> = ({
             // background, light or dark. The transparent border on inactive
             // cards reserves the same 2px so selecting/deselecting doesn't
             // shift the grid.
-            className={`relative flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 px-2 py-4 shadow-md ${
+            className={`relative flex cursor-pointer flex-col items-center justify-end rounded-lg border-2 p-3 shadow-md ${
               themeColor === name ? 'border-current' : 'border-transparent'
             }`}
             style={{
               backgroundColor: isDarkMode ? colors.dark['base-100'] : colors.light['base-100'],
               color: isDarkMode ? colors.dark['base-content'] : colors.light['base-content'],
+              minHeight: '80px',
             }}
           >
             <input
@@ -65,12 +65,8 @@ const ThemeColorSelector: React.FC<ThemeColorSelectorProps> = ({
               onChange={() => onThemeColorChange(name)}
               className='hidden'
             />
-            {themeColor === name ? (
-              <MdRadioButtonChecked size={iconSize24} />
-            ) : (
-              <MdRadioButtonUnchecked size={iconSize24} />
-            )}
-            <span className='max-w-full truncate'>{_(label)}</span>
+            <span className='max-w-full truncate text-lg font-bold'>Aa</span>
+            <span className='max-w-full truncate font-semibold'>{_(label)}</span>
             {isCustomizable && themeColor === name && (
               <button onClick={() => onEditTheme(name)}>
                 <BiPencil size={iconSize16} className='absolute right-2 top-2' />
@@ -79,11 +75,11 @@ const ThemeColorSelector: React.FC<ThemeColorSelectorProps> = ({
           </button>
         ))}
         <button
-          className='relative flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-2 py-4 shadow-md'
+          className='relative flex cursor-pointer flex-col gap-1 items-center justify-end rounded-lg border border-dashed p-3 shadow-md'
           onClick={onCreateTheme}
         >
           <PiPlus size={iconSize24} />
-          <span className='max-w-full truncate'>{_('Custom')}</span>
+          <span className='max-w-full truncate font-semibold'>{_('Custom')}</span>
         </button>
       </div>
     </div>

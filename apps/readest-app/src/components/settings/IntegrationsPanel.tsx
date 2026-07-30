@@ -14,6 +14,7 @@ import {
   RiDatabase2Line,
   RiGoogleLine,
   RiServerLine,
+  RiMicrosoftLine,
 } from 'react-icons/ri';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
@@ -119,6 +120,15 @@ const IntegrationsPanel: React.FC = () => {
     !user || (userProfilePlan !== undefined && !isCloudSyncPremium) ? _('Premium') : undefined;
 
   const [subPage, setSubPage] = useState<SubPage>(null);
+
+  // Hydrate the OPDS store from settings so the row's catalog count is
+  // accurate on first open. Without this the store starts empty and the
+  // count reads zero until the user drills into the OPDS sub-page (where
+  // CatalogManager loads it). Loading happens once per mount; the store
+  // handles backfilling contentId for legacy entries.
+  useEffect(() => {
+    void useCustomOPDSStore.getState().loadCustomOPDSCatalogs(envConfig);
+  }, [envConfig]);
 
   // Android Back / Esc: when any integrations sub-page (KOSync, CWA, WebDAV,
   // Readwise, Hardcover, OPDS, Send-to-Readest) is open, intercept and
@@ -305,6 +315,36 @@ const IntegrationsPanel: React.FC = () => {
         </div>
       </div>
     );
+  if (subPage === 'onedrive')
+    return (
+      <div className='my-4 w-full'>
+        <SubPageHeader
+          parentLabel={_('Integrations')}
+          currentLabel={_('OneDrive')}
+          description={_(
+            'Sync your library, reading progress, and highlights with your Microsoft OneDrive.',
+          )}
+          onBack={() => setSubPage(null)}
+        />
+        <OneDriveForm />
+        {settings.onedrive?.enabled && (
+          <div className='mt-5'>
+            <Tips>
+              <li>
+                {_('{{provider}} keeps a full copy of your books, progress, and annotations.', {
+                  provider: _('OneDrive'),
+                })}
+              </li>
+              <li>
+                {_(
+                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
+                )}
+              </li>
+            </Tips>
+          </div>
+        )}
+      </div>
+    );
   if (SHOW_PREMIUM_SURFACES && subPage === 'readest-cloud')
     return (
       <div className='my-4 w-full'>
@@ -380,7 +420,7 @@ const IntegrationsPanel: React.FC = () => {
 
   /** Book files have a home when Readest Cloud is on or some backend uploads them. */
   const booksBackedUpBy = (kind: FileSyncBackendKind): boolean =>
-    (readestEnabled && !!settings.autoUpload) ||
+    readestEnabled ||
     enabledBackends.some(
       (k) => k !== kind && (settings[settingsKeyForBackend(k)]?.syncBooks ?? false),
     );
@@ -492,22 +532,22 @@ const IntegrationsPanel: React.FC = () => {
           <div className='card eink-bordered border-base-200 bg-base-100 overflow-hidden border'>
             <div
               className='divide-base-200 divide-y'
-              role='radiogroup'
-              aria-label={_('Cloud sync provider')}
+              role='group'
+              aria-label={_('Cloud sync providers')}
             >
               <CloudProviderRow
                 icon={RiCloudFill}
                 title={_('Readest Cloud')}
                 status={readestStatus}
-                isActive={!!user && cloudProvider === 'readest'}
-                canActivate={!!user}
-                onActivate={() => activateCloudProvider('readest')}
+                checked={!!user && readestEnabled}
+                canToggle={!!user}
+                onToggle={(next) => toggleCloudProvider('readest', next)}
                 onOpen={() => (user ? setSubPage('readest-cloud') : navigateToLogin(router))}
-                activateLabel={_('Use Readest Cloud')}
+                toggleLabel={_('Sync with Readest Cloud')}
               />
               {/* Third-party providers are premium: every row carries the tier
-                  badge; on a free plan the radio is disabled and opening a row
-                  routes to the upgrade page instead of the config sub-page. */}
+                badge; on a free plan the checkbox is disabled and opening a
+                row routes to the upgrade page instead of the config sub-page. */}
               {(appService?.isDesktopApp ||
                 appService?.isAndroidApp ||
                 appService?.isIOSApp ||
@@ -517,42 +557,93 @@ const IntegrationsPanel: React.FC = () => {
                   icon={RiGoogleLine}
                   title={_('Google Drive')}
                   status={gdriveStatus}
-                  badge={_('Premium')}
-                  isActive={activeCloudKind === 'gdrive'}
-                  canActivate={isCloudSyncPremium && gdriveConfigured}
-                  onActivate={() => activateCloudProvider('gdrive')}
+                  badge={premiumBadge}
+                  checked={!!settings.googleDrive?.enabled}
+                  canToggle={canToggleCloudProvider({
+                    isPremium: isCloudSyncPremium,
+                    isConfigured: gdriveConfigured,
+                    isEnabled: !!settings.googleDrive?.enabled,
+                  })}
+                  onToggle={(next) => toggleCloudProvider('gdrive', next)}
                   onOpen={() =>
                     isCloudSyncPremium ? setSubPage('gdrive') : navigateToProfile(router)
                   }
-                  activateLabel={_('Use Google Drive')}
+                  toggleLabel={_('Sync with Google Drive')}
                 />
               )}
               <CloudProviderRow
                 icon={RiCloudLine}
                 title={_('WebDAV')}
                 status={webdavStatus}
-                badge={_('Premium')}
-                isActive={activeCloudKind === 'webdav'}
-                canActivate={isCloudSyncPremium && webdavConfigured}
-                onActivate={() => activateCloudProvider('webdav')}
+                badge={premiumBadge}
+                checked={!!settings.webdav?.enabled}
+                canToggle={canToggleCloudProvider({
+                  isPremium: isCloudSyncPremium,
+                  isConfigured: webdavConfigured,
+                  isEnabled: !!settings.webdav?.enabled,
+                })}
+                onToggle={(next) => toggleCloudProvider('webdav', next)}
                 onOpen={() =>
                   isCloudSyncPremium ? setSubPage('webdav') : navigateToProfile(router)
                 }
-                activateLabel={_('Use WebDAV')}
+                toggleLabel={_('Sync with WebDAV')}
               />
               <CloudProviderRow
                 icon={RiDatabase2Line}
                 title={_('S3 Storage')}
                 status={s3Status}
-                badge={_('Premium')}
-                isActive={activeCloudKind === 's3'}
-                canActivate={isCloudSyncPremium && s3Configured}
-                onActivate={() => activateCloudProvider('s3')}
+                badge={premiumBadge}
+                checked={!!settings.s3?.enabled}
+                canToggle={canToggleCloudProvider({
+                  isPremium: isCloudSyncPremium,
+                  isConfigured: s3Configured,
+                  isEnabled: !!settings.s3?.enabled,
+                })}
+                onToggle={(next) => toggleCloudProvider('s3', next)}
                 onOpen={() => (isCloudSyncPremium ? setSubPage('s3') : navigateToProfile(router))}
-                activateLabel={_('Use S3')}
+                toggleLabel={_('Sync with S3')}
               />
+              {(appService?.isDesktopApp ||
+                appService?.isAndroidApp ||
+                appService?.isIOSApp ||
+                // Web: only when a Web-type Microsoft client id is configured for this build.
+                (isWebAppPlatform() && !!getMicrosoftClientId())) && (
+                <CloudProviderRow
+                  icon={RiMicrosoftLine}
+                  title={_('OneDrive')}
+                  status={onedriveStatus}
+                  badge={premiumBadge}
+                  checked={!!settings.onedrive?.enabled}
+                  canToggle={canToggleCloudProvider({
+                    isPremium: isCloudSyncPremium,
+                    isConfigured: onedriveConfigured,
+                    isEnabled: !!settings.onedrive?.enabled,
+                  })}
+                  onToggle={(next) => toggleCloudProvider('onedrive', next)}
+                  onOpen={() =>
+                    isCloudSyncPremium ? setSubPage('onedrive') : navigateToProfile(router)
+                  }
+                  toggleLabel={_('Sync with OneDrive')}
+                />
+              )}
             </div>
           </div>
+          {providers.length === 0 && (
+            <div className='mt-5'>
+              <Tips>
+                <li>
+                  {_(
+                    'Library sync is off. Your books, progress, and annotations stay on this device.',
+                  )}
+                </li>
+                <li>
+                  {_(
+                    'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
+                  )}
+                </li>
+              </Tips>
+            </div>
+          )}
         </div>
       )}
 
