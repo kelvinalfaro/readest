@@ -149,8 +149,22 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
-            --notes-file release-notes.md \
-            --prerelease
+            --notes-file release-notes.md
+
+      - name: generate and upload latest.json
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          arm64_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_arm64.apk"
+          jq -n \
+            --arg ver "$version" \
+            --arg url "$arm64_url" \
+            '{version: $ver, platforms: {"android-arm64": {url: $url}}}' > latest.json
+          gh release upload "$TAG_NAME" latest.json --clobber
 
       - name: upload apk artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
