@@ -54,11 +54,12 @@ export const ColorPanel: React.FC<ColorPanelProps> = ({
   const debouncedSetScreenBrightness = useMemo(
     () =>
       debounce(async (value: number) => {
-        saveSysSettings(envConfig, 'screenBrightness', value);
-        saveSysSettings(envConfig, 'autoScreenBrightness', false);
+        if (!settings.autoScreenBrightness) {
+          saveSysSettings(envConfig, 'screenBrightness', value);
+        }
         await setScreenBrightness(value / 100);
       }, 100),
-    [envConfig, setScreenBrightness],
+    [envConfig, setScreenBrightness, settings.autoScreenBrightness],
   );
 
   const handleScreenBrightnessChange = useCallback(
@@ -80,9 +81,13 @@ export const ColorPanel: React.FC<ColorPanelProps> = ({
     'footerbar-color-mobile not-eink:bg-base-200 eink:bg-base-100 absolute flex w-full flex-col items-center gap-y-8 px-4 transition-all',
     'eink:border-base-content eink:border-t',
     !forceMobileLayout && 'sm:hidden',
+    // Paddings stay constant in both states (the slide is transform-only) so
+    // offsetHeight always reports the panel's settled height; the TTS mini
+    // player measures it to stack above the expanded panel.
+    'pb-4 pt-8',
     actionTab === 'color'
-      ? 'pointer-events-auto translate-y-0 pb-4 pt-8 ease-out'
-      : 'pointer-events-none invisible translate-y-full overflow-hidden pb-0 pt-0 ease-in',
+      ? 'pointer-events-auto translate-y-0 ease-out'
+      : 'pointer-events-none invisible translate-y-full overflow-hidden ease-in',
   );
 
   return (

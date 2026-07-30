@@ -374,7 +374,9 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     const opts = { passive: false };
     detail.doc?.addEventListener('touchstart', handleTouchStart, opts);
     detail.doc?.addEventListener('touchmove', handleTouchmove, opts);
-    detail.doc?.addEventListener('touchend', handleTouchEnd);
+    // Bound to the section so a selectionchange deferred during the drag can
+    // be processed (and the popup shown once) when the gesture ends.
+    detail.doc?.addEventListener('touchend', handleTouchEnd.bind(null, doc, index));
     // Re-arm the instant quick action at the start of each gesture. Android does
     // this via the native-touch touchstart above; iOS/desktop have no such path,
     // and a single iOS long-press emits multiple selectionchange events for the
@@ -1850,7 +1852,10 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
         </ModalPortal>
       )}
       {importingMrexpt && (
-        <div className='fixed inset-0 z-50 flex items-center justify-center bg-black/30'>
+        <div
+          data-capture-blocking-overlay='true'
+          className='fixed inset-0 z-50 flex items-center justify-center bg-black/30'
+        >
           <div className='modal-box bg-base-100 flex flex-col items-center gap-3 px-8 py-6 shadow-2xl'>
             <svg className='text-primary h-8 w-8 animate-spin' viewBox='0 0 24 24' fill='none'>
               <circle

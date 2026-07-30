@@ -315,10 +315,13 @@ struct SingleInstancePayload {
 pub fn run() {
     // Initialize Sentry as early as possible so panics during startup are
     // captured. `None` DSN (unset SENTRY_DSN) => disabled, so local and fork
-    // builds don't report. Desktop also starts the out-of-process minidump
-    // handler for native crashes; on mobile, native crashes belong to the
-    // sentry-android / sentry-cocoa SDKs. The guard must outlive the app, so it
-    // is held until `run()` returns (after the blocking `.run(...)` call).
+    // builds don't report. This client covers Rust panics and the events the
+    // WebView forwards; native crashes belong to the sentry-android /
+    // sentry-cocoa SDKs on mobile and go unreported on desktop, where the
+    // out-of-process minidump handler is deliberately off (see the
+    // `minidump_feature_is_enabled_on_no_target` test). The guard must outlive
+    // the app, so it is held until `run()` returns (after the blocking
+    // `.run(...)` call).
     let sentry_guard = sentry_config::sentry_dsn().map(|dsn| {
         sentry::init((
             dsn,
@@ -332,11 +335,26 @@ pub fn run() {
                 // version from the kernel string) so events group correctly.
                 before_send: Some(std::sync::Arc::new(|mut event| {
                     // Drop known-benign browser noise (e.g. View Transition
-                    // skipped/aborted) before it is reported.
+                    // skipped/aborted, ResizeObserver loop) before it is reported.
                     if event.exception.values.iter().any(|ex| {
                         ex.value
                             .as_deref()
                             .is_some_and(sentry_config::is_ignored_browser_error)
+                    }) {
+                        return None;
+                    }
+                    // Drop the contained MOBI cover panic: the `mobi` crate panics
+                    // on a corrupt cover record, which extract_cover catch_unwinds
+                    // (the import still succeeds), but the panic hook reports it
+                    // anyway. Match our own frame so unrelated slice panics stay.
+                    if event.exception.values.iter().any(|ex| {
+                        ex.stacktrace.iter().any(|st| {
+                            st.frames.iter().any(|f| {
+                                f.function
+                                    .as_deref()
+                                    .is_some_and(sentry_config::is_mobi_cover_panic_frame)
+                            })
+                        })
                     }) {
                         return None;
                     }
@@ -371,11 +389,6 @@ pub fn run() {
             },
         ))
     });
-
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let _minidump_guard = sentry_guard
-        .as_ref()
-        .map(|guard| tauri_plugin_sentry::minidump::init(guard));
 
     let builder = tauri::Builder::default()
         .plugin(
@@ -695,26 +708,29 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let window = win_builder.build().unwrap();
-                // On macOS, closing a window (via Cmd+W or the red traffic light) should
-                // not quit the app — only Cmd+Q should. Hide the window instead so the
-                // app keeps running in the dock, and restore it when the user reopens
-                // the app from the dock.
+                // On macOS, closing a window (via Cmd+W or the red traffic light)
+                // should not quit the app — only Cmd+Q should — and normally hides
+                // instead of minimizing (#5240): the app keeps running in the dock
+                // and the window is restored when the user reopens the app from the
+                // dock. On Tahoe the hide is defensive against the `orderOut:`
+                // phantom-window regression (#4875); see
+                // `macos::window::hide_main_window` for the fullscreen-failure
+                // fallback.
                 let window_for_close = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                window.on_window_event(move |event| match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
                         api.prevent_close();
-                        // macOS 26 (Tahoe) regressed `NSWindow` ordering: `orderOut:`
-                        // (what `hide()` maps to) can leave a focused black phantom
-                        // window on screen instead of hiding it (#4875). Minimize
-                        // instead on Tahoe — a different AppKit path that still keeps
-                        // the app in the dock and preserves the open book. The Reopen
-                        // handler below already unminimizes on dock reopen.
-                        if macos::os_version::is_macos_tahoe_or_later() {
-                            let _ = window_for_close.minimize();
-                        } else {
-                            let _ = window_for_close.hide();
-                        }
+                        macos::window::hide_main_window(&window_for_close);
                     }
+                    // Safety net for JS-side `show()` callers (e.g.
+                    // `ensureMainLibraryWindow` in src/utils/nav.ts re-shows a hidden
+                    // main window from a reader window without a dock Reopen): the
+                    // window can only become key after it is back on screen, so any
+                    // pending defensively-zeroed frame must be restored by now.
+                    tauri::WindowEvent::Focused(true) => {
+                        macos::window::restore_main_window_frame(&window_for_close);
+                    }
+                    _ => {}
                 });
             }
 
@@ -753,9 +769,21 @@ pub fn run() {
                         ..
                     } => {
                         if let Some(window) = app_handle.get_webview_window("main") {
+                            // Undo a pending Tahoe defensive hide (zeroed frame) before
+                            // showing so the window reappears at its real position and
+                            // size. No-op when the window was hidden plainly.
+                            macos::window::restore_main_window_frame(&window);
                             let _ = window.show();
                             let _ = window.set_focus();
                             let _ = window.unminimize();
+                        }
+                    }
+                    // A programmatic exit emits ExitRequested before the window-state
+                    // plugin performs its final save. Restore any zeroed frame while
+                    // the window is still hidden so live geometry remains valid.
+                    tauri::RunEvent::ExitRequested { .. } => {
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            macos::window::restore_main_window_frame(&window);
                         }
                     }
                     _ => {}

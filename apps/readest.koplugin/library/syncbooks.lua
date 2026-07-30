@@ -125,6 +125,24 @@ function M.resolve_collision(candidate, exists)
     return candidate
 end
 
+-- sanitize_json_nulls(v) — recursively replace function-valued JSON null
+-- sentinels with dkjson's null. KOReader's require("json") is LuaJSON, whose
+-- decoder represents a JSON null as a *function* (json.util.null). The /sync
+-- push payload is re-encoded by Spore's Format.JSON middleware with dkjson,
+-- which raises "type 'function' is not supported by JSON" on any function and
+-- fails the entire pushChanges (issue #5006). Converting the sentinel to
+-- dkjson.null re-encodes it as a JSON null — byte-faithful to what the
+-- metadata carried on the wire, with no metadata churn across devices.
+local function sanitize_json_nulls(v)
+    if type(v) == "function" then
+        return require("dkjson").null
+    elseif type(v) == "table" then
+        for k, val in pairs(v) do v[k] = sanitize_json_nulls(val) end
+    end
+    return v
+end
+M._sanitize_json_nulls = sanitize_json_nulls  -- exported for tests
+
 -- ---------------------------------------------------------------------------
 -- row_to_wire(row) — convert our internal snake_case row to the
 -- camelCase Book shape Readest's server expects on POST /sync (mirrors
@@ -159,14 +177,14 @@ local function row_to_wire(row)
     if row.metadata_json and row.metadata_json ~= "" then
         local json = require("json")
         local ok, parsed = pcall(json.decode, row.metadata_json)
-        if ok and type(parsed) == "table" then out.metadata = parsed end
+        if ok and type(parsed) == "table" then out.metadata = sanitize_json_nulls(parsed) end
     end
     -- progress: stored locally as JSON tuple [cur, total] in progress_lib;
     -- the wire format expects the actual array.
     if row.progress_lib and row.progress_lib ~= "" then
         local json = require("json")
         local ok, parsed = pcall(json.decode, row.progress_lib)
-        if ok and type(parsed) == "table" then out.progress = parsed end
+        if ok and type(parsed) == "table" then out.progress = sanitize_json_nulls(parsed) end
     end
     return out
 end
@@ -903,6 +921,64 @@ function M.uploadBook(book, opts, cb)
                 if cb then cb(true) end
             end
         end)
+    end)
+end
+
+-- ---------------------------------------------------------------------------
+-- uploadAndRecord(book, opts, cb) — uploadBook plus the bookkeeping that has
+-- to follow a successful upload.
+-- ---------------------------------------------------------------------------
+-- Mirrors cloudService.uploadBook's post-upload writes: mark the row
+-- cloud-present, stamp uploaded_at + updated_at, clear any tombstone, then
+-- push the row so other devices learn the book is in the cloud.
+--
+-- Shared by the Library widget's long-press "Upload to Cloud" and the plugin
+-- menu's "Upload current book to Readest" so the two can't drift. Skipping
+-- this step would strand the book: the row would stay cloud_present=0, so the
+-- Library would keep showing the upload icon and peers would never see it.
+--
+-- Nothing is recorded when the upload fails — claiming cloud_present for bytes
+-- that never landed would tell peers to download a file that isn't there.
+--
+-- The push runs in the background: the book is in the cloud and the local row
+-- already knows it, so callers shouldn't hold a progress dialog open waiting
+-- on a metadata round-trip. opts.on_pushed fires when it lands.
+--
+-- opts: { sync_auth, sync_path, settings, store, covers_dir = optional,
+--         on_pushed = optional }
+-- cb: function(success, msg, status)
+-- ---------------------------------------------------------------------------
+function M.uploadAndRecord(book, opts, cb)
+    M.uploadBook(book, opts, function(success, msg, status)
+        if not success then
+            if cb then cb(false, msg, status) end
+            return
+        end
+
+        local now = math.floor(os.time() * 1000)
+        opts.store:upsertBook({
+            hash          = book.hash,
+            title         = book.title,
+            cloud_present = 1,
+            uploaded_at   = now,
+            updated_at    = now,
+            _clear_fields = { "deleted_at" },
+        })
+
+        -- Copy rather than mutate: callers hand us a live row (the Library
+        -- widget passes its on-screen entry), and the wire row needs
+        -- deleted_at gone so peers stop treating the book as deleted.
+        local pushed = {}
+        for k, v in pairs(book) do pushed[k] = v end
+        pushed.cloud_present = 1
+        pushed.uploaded_at   = now
+        pushed.updated_at    = now
+        pushed.deleted_at    = nil
+
+        M.pushBook(pushed, opts, function()
+            if opts.on_pushed then opts.on_pushed() end
+        end)
+        if cb then cb(true) end
     end)
 end
 

@@ -51,12 +51,14 @@ import {
   expandOPDSSearchTemplate,
   resolveURL,
   getFileExtFromPath,
+  getSafeDOMParserMimeType,
   looksLikeXMLContent,
   parseOPDSXML,
   MIME,
   validateOPDSURL,
   getOPDSNavLink,
   getUnaddedPopularCatalogs,
+  formatContributorName,
 } from '@/app/opds/utils/opdsUtils';
 import type { OPDSBaseLink, OPDSCatalog } from '@/types/opds';
 import { fetchWithAuth } from '@/app/opds/utils/opdsReq';
@@ -66,6 +68,18 @@ const mockFetchWithAuth = vi.mocked(fetchWithAuth);
 describe('opdsUtils', () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('formatContributorName', () => {
+    // Calibre stores commas in author names as `|` (e.g. `Doe| John`), and
+    // Calibre-Web OPDS feeds serve that raw form (readest issue #5183).
+    it('restores commas that Calibre escaped as pipes', () => {
+      expect(formatContributorName('Doe| John Walter')).toBe('Doe, John Walter');
+    });
+
+    it('leaves names without pipes unchanged', () => {
+      expect(formatContributorName('John Walter Doe')).toBe('John Walter Doe');
+    });
   });
 
   describe('groupByArray', () => {
@@ -361,6 +375,36 @@ describe('opdsUtils', () => {
       // The function strips search params for non-scheme relativeTo
       expect(result).not.toContain('page=2');
     });
+
+    // bookserver.mek.oszk.hu (readest issue #5300) serves its catalog over HTTPS
+    // but publishes absolute `http://` links to itself; its plain-HTTP vhost
+    // 301-redirects to an unrelated host that 404s, so every sub-feed failed.
+    it('should keep same-host links on https when the feed was fetched over https', () => {
+      const result = resolveURL(
+        'http://bookserver.mek.oszk.hu/abcrend.atom',
+        'https://bookserver.mek.oszk.hu/',
+      );
+      expect(result).toBe('https://bookserver.mek.oszk.hu/abcrend.atom');
+    });
+
+    it('should upgrade same-host links behind the proxy base too', () => {
+      const proxyBase = '/api/opds/proxy?url=https%3A%2F%2Fexample.com%2Fopds';
+      expect(resolveURL('http://example.com/feed/new', proxyBase)).toBe(
+        'https://example.com/feed/new',
+      );
+    });
+
+    it('should leave cross-host http links untouched', () => {
+      expect(resolveURL('http://other.com/feed', 'https://example.com/opds')).toBe(
+        'http://other.com/feed',
+      );
+    });
+
+    it('should not upgrade when the feed itself was fetched over http', () => {
+      expect(resolveURL('http://example.com/feed', 'http://example.com/opds')).toBe(
+        'http://example.com/feed',
+      );
+    });
   });
 
   describe('getFileExtFromPath', () => {
@@ -448,6 +492,19 @@ describe('opdsUtils', () => {
 
     it('returns false for an empty string', () => {
       expect(looksLikeXMLContent('')).toBe(false);
+    });
+  });
+
+  describe('getSafeDOMParserMimeType', () => {
+    it('maps XML-like MIME types to application/xml', () => {
+      expect(getSafeDOMParserMimeType('application/atom+xml')).toBe('application/xml');
+      expect(getSafeDOMParserMimeType('application/atom+xml;profile=opds-catalog')).toBe(
+        'application/xml',
+      );
+    });
+
+    it('leaves HTML MIME types unchanged', () => {
+      expect(getSafeDOMParserMimeType('text/html')).toBe('text/html');
     });
   });
 

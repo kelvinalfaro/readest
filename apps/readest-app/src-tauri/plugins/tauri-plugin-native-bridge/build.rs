@@ -40,6 +40,8 @@ const COMMANDS: &[&str] = &[
     "refresh_eink_screen",
     "update_reading_widget",
     "capture_webview_region",
+    "set_text_selection_suppressed",
+    "read_share_clip_html",
 ];
 
 fn main() {

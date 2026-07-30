@@ -1,10 +1,12 @@
 import clsx from 'clsx';
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useEnv } from '@/context/EnvContext';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useLongPress } from '@/hooks/useLongPress';
 import { Menu, type MenuItemOptions } from '@tauri-apps/api/menu';
+import { LogicalPosition } from '@tauri-apps/api/dpi';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { eventDispatcher } from '@/utils/event';
 import { openExternalUrl } from '@/utils/open';
@@ -105,6 +107,7 @@ interface BookshelfItemProps {
   handleShowDetailsBook: (book: Book) => void;
   handleLibraryNavigation: (targetGroup: string) => void;
   handleUpdateReadingStatus: (book: Book, status: ReadingStatus | undefined) => void;
+  showTimeRemaining: boolean;
 }
 
 const BookshelfItem: React.FC<BookshelfItemProps> = ({
@@ -123,6 +126,7 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
   handleShowDetailsBook,
   handleLibraryNavigation,
   handleUpdateReadingStatus,
+  showTimeRemaining,
 }) => {
   const _ = useTranslation();
   const { appService } = useEnv();
@@ -157,8 +161,7 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
     [isSelectMode, handleLibraryNavigation],
   );
 
-  const bookContextMenuHandler = async (book: Book) => {
-    if (!appService?.hasContextMenu) return;
+  const buildBookMenu = async (book: Book) => {
     const osPlatform = getOSPlatform();
     const fileRevealLabel =
       FILE_REVEAL_LABELS[osPlatform as FILE_REVEAL_PLATFORMS] || FILE_REVEAL_LABELS.default;
@@ -255,12 +258,10 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
       },
     };
     const items = getBookContextMenuItemIds(book).map((id) => itemOptions[id]);
-    const menu = await Menu.new({ items });
-    await menu.popup();
+    return Menu.new({ items });
   };
 
-  const groupContextMenuHandler = async (group: BooksGroup) => {
-    if (!appService?.hasContextMenu) return;
+  const buildGroupMenu = async (group: BooksGroup) => {
     // Single Menu.new({ items }) call keeps the order deterministic — see the
     // note in bookContextMenuHandler about the Menu.append() IPC race (#4389).
     const items: MenuItemOptions[] = [
@@ -293,9 +294,38 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
         },
       },
     ];
-    const menu = await Menu.new({ items });
-    await menu.popup();
+    return Menu.new({ items });
   };
+
+  // Building the menu crosses the Tauri IPC boundary and takes long enough
+  // that the popup visibly lags the right-click (issue #5181). Cache the
+  // built menu so popup() fires immediately; hovering the item prewarms the
+  // cache so even the first opening is instant.
+  const cachedMenuRef = useRef<Promise<Menu> | null>(null);
+
+  const ensureMenu = () => {
+    if (!cachedMenuRef.current) {
+      const building =
+        'format' in item ? buildBookMenu(item as Book) : buildGroupMenu(item as BooksGroup);
+      building.catch(() => {
+        // A failed build must not poison the cache with a rejected promise.
+        if (cachedMenuRef.current === building) cachedMenuRef.current = null;
+      });
+      cachedMenuRef.current = building;
+    }
+    return cachedMenuRef.current;
+  };
+
+  // Drop the cache whenever state baked into the items changes (selection
+  // label, book status, reveal path, language); the cleanup also runs on
+  // unmount so the native menu resource is released.
+  useEffect(() => {
+    return () => {
+      const cached = cachedMenuRef.current;
+      cachedMenuRef.current = null;
+      cached?.then((menu) => menu.close()).catch(() => {});
+    };
+  }, [item, itemSelected, isSelectMode, settings.localBooksDir, _]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleSelectItem = useCallback(
@@ -330,14 +360,27 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const handleContextMenu = useCallback(
-    throttle(() => {
-      if ('format' in item) {
-        bookContextMenuHandler(item as Book);
-      } else {
-        groupContextMenuHandler(item as BooksGroup);
-      }
+    throttle(async (position: { x: number; y: number }) => {
+      if (!appService?.hasContextMenu) return;
+      const menu = await ensureMenu();
+      // Pop up at an explicit window position: a positionless popup is
+      // anchored to the X11 root window, which doesn't exist on Wayland, so
+      // the menu fails to map and disappears immediately (issue #5181).
+      // CSS px are not window-logical px when the webview carries a page
+      // zoom (WebKitGTK folds the desktop text-scaling factor into one
+      // without reflecting it in devicePixelRatio), so map the click's
+      // fraction of the CSS viewport onto the window's logical size — any
+      // uniform zoom cancels out of the ratio.
+      const win = getCurrentWindow();
+      const [innerSize, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+      await menu.popup(
+        new LogicalPosition(
+          (position.x / window.innerWidth) * (innerSize.width / scale),
+          (position.y / window.innerHeight) * (innerSize.height / scale),
+        ),
+      );
     }, 100),
-    [itemSelected, settings.localBooksDir],
+    [item, itemSelected, isSelectMode, settings.localBooksDir],
   );
 
   const { pressing, handlers } = useLongPress(
@@ -348,9 +391,9 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
       onTap: () => {
         handleOpenItem();
       },
-      onContextMenu: () => {
+      onContextMenu: (e) => {
         if (appService?.hasContextMenu) {
-          handleContextMenu();
+          handleContextMenu({ x: e.clientX, y: e.clientY });
         } else if (appService?.isAndroidApp) {
           handleSelectItem();
         }
@@ -366,7 +409,8 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
     }
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       e.preventDefault();
-      handleContextMenu();
+      const rect = e.currentTarget.getBoundingClientRect();
+      handleContextMenu({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
     }
   };
 
@@ -396,6 +440,9 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
           transition: 'transform 0.2s',
         }}
         onKeyDown={handleKeyDown}
+        onPointerEnter={() => {
+          if (appService?.hasContextMenu) void ensureMenu();
+        }}
         {...itemDataAttrs}
         {...handlers}
       >
@@ -411,6 +458,7 @@ const BookshelfItem: React.FC<BookshelfItemProps> = ({
               handleBookUpload={handleBookUpload}
               handleBookDownload={handleBookDownload}
               showBookDetailsModal={showBookDetailsModal}
+              showTimeRemaining={showTimeRemaining}
             />
           ) : (
             <GroupItem

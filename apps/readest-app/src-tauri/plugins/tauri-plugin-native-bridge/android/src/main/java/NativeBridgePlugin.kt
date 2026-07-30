@@ -2,7 +2,9 @@ package com.readest.native_bridge
 
 import android.Manifest
 import android.app.Activity
+import android.app.Application
 import android.app.PendingIntent
+import android.os.Bundle
 import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
@@ -203,6 +205,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
 
     override fun onDestroy() {
         pluginScope.cancel()
+        activity.application.unregisterActivityLifecycleCallbacks(lifecycleCallbacks)
         instance = null
     }
 
@@ -219,11 +222,34 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         instance = this
         webViewRef = webView
         super.load(webView)
+        activity.application.registerActivityLifecycleCallbacks(lifecycleCallbacks)
         handleIntent(activity.intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         handleIntent(intent)
+    }
+
+    // Tauri declares Plugin.onResume but never registers the observer that calls it.
+    private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
+        override fun onActivityResumed(resumed: Activity) {
+            if (resumed === activity) releaseBrightnessOverride()
+        }
+
+        override fun onActivityCreated(a: Activity, b: Bundle?) {}
+        override fun onActivityStarted(a: Activity) {}
+        override fun onActivityPaused(a: Activity) {}
+        override fun onActivityStopped(a: Activity) {}
+        override fun onActivitySaveInstanceState(a: Activity, b: Bundle) {}
+        override fun onActivityDestroyed(a: Activity) {}
+    }
+
+    // The system owns brightness across a background trip: drop our window
+    // override on resume and keep whatever brightness the system shows now.
+    private fun releaseBrightnessOverride() {
+        val layoutParams = activity.window.attributes
+        layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        activity.window.attributes = layoutParams
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -470,8 +496,10 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
 
                     val itemUri = resolver.insert(collection, values)
                     if (itemUri == null) {
+                        val error = "MediaStore rejected $displayName ($mimeType) in $album"
+                        Log.e("NativeBridge", error)
                         r.put("success", false)
-                        r.put("error", "Failed to create MediaStore entry")
+                        r.put("error", error)
                         return@withContext r
                     }
 
@@ -492,8 +520,12 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
                     r.put("success", true)
                     r.put("uri", itemUri.toString())
                 } catch (e: Exception) {
+                    // OEM MediaStore implementations diverge on what they accept, so
+                    // the exception is the only thing that identifies a device-specific
+                    // failure from a bug report.
+                    Log.e("NativeBridge", "Failed to save image to gallery", e)
                     r.put("success", false)
-                    r.put("error", e.message)
+                    r.put("error", "${e.javaClass.simpleName}: ${e.message}")
                 }
                 r
             }
@@ -1581,7 +1613,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
                             pluginScope.launch {
                                 val data = withContext(Dispatchers.IO) {
                                     val out = ByteArrayOutputStream()
-                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
                                     Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
                                 }
                                 invoke.resolve(JSObject().put("data", data))

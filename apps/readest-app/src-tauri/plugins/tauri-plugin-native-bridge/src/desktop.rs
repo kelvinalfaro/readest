@@ -71,6 +71,13 @@ impl<R: Runtime> NativeBridge<R> {
         Err(crate::Error::UnsupportedPlatformError)
     }
 
+    pub fn set_text_selection_suppressed(
+        &self,
+        _payload: SetTextSelectionSuppressedRequest,
+    ) -> crate::Result<()> {
+        Err(crate::Error::UnsupportedPlatformError)
+    }
+
     pub fn install_package(
         &self,
         _payload: InstallPackageRequest,
@@ -284,6 +291,15 @@ impl<R: Runtime> NativeBridge<R> {
             "clip_url plugin is mobile-only; desktop callers should invoke the top-level command"
                 .to_string(),
         ))
+    }
+
+    /// Share-Extension clip files only exist in the iOS App Group
+    /// container — desktop has no share extension.
+    pub fn read_share_clip_html(
+        &self,
+        _payload: ReadShareClipHtmlRequest,
+    ) -> crate::Result<ReadShareClipHtmlResponse> {
+        Ok(ReadShareClipHtmlResponse { html: None })
     }
 
     // ── Keyed secure key-value store ────────────────────────────────────

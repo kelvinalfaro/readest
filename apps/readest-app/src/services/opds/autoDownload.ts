@@ -24,6 +24,7 @@ import type {
   OPDSCatalogSyncStats,
 } from './types';
 import { runWithConcurrency } from '@/utils/concurrency';
+import { uniqueId } from '@/utils/misc';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -71,9 +72,7 @@ async function downloadAndImport(
   // Use the last non-empty path segment as the base; falling back to the
   // entry id avoids producing 200+ char filenames from deep URLs and keeps
   // us comfortably under the ~255-byte filesystem limit.
-  const lastSegment = pathname.split('/').filter(Boolean).pop() ?? '';
-  const sanitized = (lastSegment || item.entryId).replaceAll(/[/\\:*?"<>|]/g, '_').slice(0, 200);
-  const basename = sanitized || 'opds-download';
+  const basename = uniqueId();
   const filename = ext ? `${basename}.${ext}` : basename;
   let dstFilePath = await appService.resolveFilePath(filename, 'Cache');
 

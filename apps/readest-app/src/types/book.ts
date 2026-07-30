@@ -2,6 +2,7 @@ import { BookMetadata } from '@/libs/document';
 import { TTSHighlightOptions } from '@/services/tts/types';
 import { TTSHighlightGranularity } from '@/services/tts/types';
 import { TTSMediaMetadataMode } from '@/services/tts/types';
+import { TTSPlayerStyle } from '@/services/tts/types';
 import type { AnnotationLinkType } from '@/utils/deeplink';
 import { AnnotationToolType } from './annotator';
 
@@ -87,6 +88,12 @@ export interface Book {
   url?: string;
   // if Book is a transient local book we can load the book content via filePath
   filePath?: string;
+  // Other on-disk paths that resolved to this same book — a watched folder
+  // holding the same file twice under different names, or a copy left behind
+  // after a rename. Only `filePath` is ever read from; these are remembered so
+  // the auto-import scan doesn't treat a known duplicate as a new file on every
+  // pass. Device-local like `filePath`: never published to peers.
+  altFilePaths?: string[];
   // Partial md5 hash of the book file, used as the unique identifier
   hash: string;
   // Metadata md5 hash, used to aggregate different versions of the same book
@@ -286,7 +293,6 @@ export interface BookLanguage {
   convertChineseVariant: ConvertChineseVariant;
 }
 
-export type ProgressBarMode = 'remaining' | 'progress' | 'battery' | 'time' | 'all' | 'none';
 // 'push' slides the whole strip; 'slide' and 'curl' layer the outgoing page
 // over the still incoming page (Apple Books style, needs View Transitions).
 export type PageTurnStyle = 'push' | 'slide' | 'curl';
@@ -308,11 +314,9 @@ export interface ViewConfig {
   use24HourClock: boolean;
   showCurrentBatteryStatus: boolean;
   showBatteryPercentage: boolean;
-  tapToToggleFooter: boolean;
   showPaginationButtons: boolean;
   progressStyle: 'percentage' | 'fraction' | 'reference';
   referencePageCount: number;
-  progressInfoMode: ProgressBarMode;
 
   animated: boolean;
   pageTurnStyle: PageTurnStyle;
@@ -330,11 +334,14 @@ export interface ViewConfig {
 
 export interface TTSConfig {
   ttsRate: number;
+  ttsSentenceGap: number;
+  ttsParagraphGap: number;
   ttsVoice: string;
   ttsLocation: string;
   ttsHighlightOptions: TTSHighlightOptions;
   ttsHighlightGranularity: TTSHighlightGranularity;
   ttsMediaMetadata: TTSMediaMetadataMode;
+  ttsPlayerStyle: TTSPlayerStyle;
 }
 
 export interface TranslatorConfig {

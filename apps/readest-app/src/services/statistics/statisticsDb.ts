@@ -52,10 +52,14 @@ export class StatisticsDb {
   static async open(appService: AppService): Promise<StatisticsDb> {
     bindLifecycle();
     if (!sharedDb) {
-      sharedDb = (async () => {
+      const opening = (async () => {
         const db = await appService.openDatabase('statistics', 'statistics.db', 'Data');
         return new StatisticsDb(db);
       })();
+      sharedDb = opening;
+      void opening.catch(() => {
+        if (sharedDb === opening) sharedDb = null;
+      });
     }
     return sharedDb;
   }
@@ -134,6 +138,32 @@ export class StatisticsDb {
        WHERE id = ?`,
       [idBook, idBook, idBook, idBook, idBook],
     );
+  }
+
+  /**
+   * Returns the median duration of time spent on each page in seconds. Returns
+   * `null` if sufficient data is not available.
+   *
+   * Use the median since reading times are skewed; thus the median must be
+   * used to get the middle value.
+   */
+  async getMedianPageDurationSecs(idBook: number): Promise<number | null> {
+    const PAGE_THRESHOLD = 5;
+    const rows = await this.db.select<{ duration: number }>(
+      `SELECT duration
+         FROM page_stat_data
+         WHERE id_book = ?
+         ORDER BY start_time DESC
+         LIMIT 50`,
+      [idBook],
+    );
+    if (rows.length < PAGE_THRESHOLD) return null;
+    // The query orders by recency; sort by value so the middle is the true median.
+    const pageDurations = rows.map((d) => d['duration']).sort((a, b) => a - b);
+    const mid = Math.floor(pageDurations.length / 2);
+    return pageDurations.length % 2 !== 0
+      ? (pageDurations[mid] ?? 0)
+      : ((pageDurations[mid - 1] ?? 0) + (pageDurations[mid] ?? 0)) / 2;
   }
 
   async getBookByMd5(md5: string): Promise<BookRow | null> {
