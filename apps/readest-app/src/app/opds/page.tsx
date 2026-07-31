@@ -57,6 +57,7 @@ import { Navigation } from './components/Navigation';
 import { normalizeOPDSCustomHeaders } from './utils/customHeaders';
 import { closeOPDSBrowser, stashOPDSReturnTarget } from './utils/opdsClose';
 import { findExistingBookForPublication } from './utils/findExistingBook';
+import { persistDownloadedBook } from './utils/persistDownloadedBook';
 import Dialog from '@/components/Dialog';
 import { addCWABookSource, getCWASettings, resolveCWAUrl } from '@/services/cwa';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
@@ -653,8 +654,7 @@ export default function BrowserPage() {
                 transferManager.queueUpload(book);
               }, 3000);
             }
-            setLibrary(library);
-            appService.saveLibraryBooks(library);
+            await persistDownloadedBook(appService, library, setLibrary);
             return book;
           } catch (importError) {
             console.error('Import error:', importError);
