@@ -3,6 +3,7 @@ import type { Book } from '@/types/book';
 import type { AppService } from '@/types/system';
 import type { SystemSettings } from '@/types/settings';
 import {
+  addCWABookSource,
   cleanupFinishedCWABooks,
   CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
   CWA_DEFAULT_QUEUE_TARGET,
@@ -129,6 +130,26 @@ describe('CWA URL helpers', () => {
     expect(getCWAKOSyncUrl({ serverUrl: 'https://cwa.example/books/kosync' })).toBe(
       'https://cwa.example/books/kosync',
     );
+  });
+});
+
+describe('CWA book sources', () => {
+  it('keeps a newly added primary source JSON-serializable', () => {
+    const book = makeBook();
+    const source = {
+      subscriptionId: 'new',
+      subscriptionName: 'New',
+      catalogId: 'cwa-sub-new',
+      entryId: 'entry-1',
+      sourceUrl: 'https://cwa.example/books/get/1.epub',
+      downloadedAt: 1,
+    };
+
+    addCWABookSource(book, source);
+
+    expect(() => JSON.stringify(book)).not.toThrow();
+    expect(book.cwaSource).not.toBe(source);
+    expect(book.cwaSource?.sources?.[0]).not.toBe(book.cwaSource);
   });
 });
 

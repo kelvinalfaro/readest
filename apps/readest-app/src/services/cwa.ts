@@ -200,6 +200,15 @@ const normalizeSourceUrl = (url?: string): string => (url || '').trim();
 const sourceRefKey = (source: Pick<CWABookSourceRef, 'subscriptionId' | 'entryId' | 'sourceUrl'>) =>
   `${source.subscriptionId}:${source.entryId || normalizeSourceUrl(source.sourceUrl)}`;
 
+const copyCWABookSource = (source: CWABookSourceRef): CWABookSourceRef => ({
+  subscriptionId: source.subscriptionId,
+  subscriptionName: source.subscriptionName,
+  catalogId: source.catalogId,
+  entryId: source.entryId,
+  sourceUrl: source.sourceUrl,
+  downloadedAt: source.downloadedAt,
+});
+
 export const getCWABookSources = (book: Book): CWABookSourceRef[] => {
   if (!book.cwaSource) return [];
   const primary: CWABookSourceRef = {
@@ -221,10 +230,11 @@ export const addCWABookSource = (book: Book, source: CWABookSourceRef) => {
   const existing = getCWABookSources(book);
   const byKey = new Map(existing.map((item) => [sourceRefKey(item), item]));
   byKey.set(sourceRefKey(source), source);
-  if (!book.cwaSource) {
-    book.cwaSource = source;
-  }
-  book.cwaSource.sources = Array.from(byKey.values());
+  const primary = copyCWABookSource(book.cwaSource ?? source);
+  book.cwaSource = {
+    ...primary,
+    sources: Array.from(byKey.values(), copyCWABookSource),
+  };
 };
 
 const readSuppressionKey = (entry: {
