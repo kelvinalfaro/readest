@@ -19,12 +19,16 @@ const COMMANDS: &[&str] = &[
     "get_safe_area_insets",
     "get_screen_brightness",
     "set_screen_brightness",
+    "has_ambient_light_sensor",
+    "start_ambient_light_updates",
+    "stop_ambient_light_updates",
     "get_external_sdcard_path",
     "open_external_url",
     "show_lookup_popover",
     "get_lookup_dictionary",
     "clear_lookup_dictionary",
     "select_directory",
+    "show_file_picker",
     "get_storefront_region_code",
     "register_listener",
     "remove_listener",
@@ -40,8 +44,10 @@ const COMMANDS: &[&str] = &[
     "refresh_eink_screen",
     "update_reading_widget",
     "capture_webview_region",
-    "set_text_selection_suppressed",
+    "set_selection_suppressed",
     "read_share_clip_html",
+    "icloud_container_status",
+    "icloud_ensure_downloaded",
 ];
 
 fn main() {

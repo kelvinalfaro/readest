@@ -21,11 +21,18 @@ export class ReaderPage extends BasePage {
   readonly tocItems: Locator;
   readonly searchResults: Locator;
   readonly annotationPopup: Locator;
+  readonly dictionaryPopup: Locator;
+  readonly translatorPopup: Locator;
+  readonly proofreadPopup: Locator;
   readonly noteEditor: Locator;
   readonly annotationItems: Locator;
+  readonly pageJumpInput: Locator;
 
   constructor(page: Page) {
     super(page);
+    // Both the desktop footer bar and the mobile navigation panel render a
+    // page-jump input; pick whichever one the current layout displays.
+    this.pageJumpInput = page.locator('input[aria-label="Go to Page"]:visible').first();
     this.viewer = page.locator('.foliate-viewer').first();
     this.foliateView = page.locator('foliate-view').first();
     this.headerBar = page.locator('.header-bar').first();
@@ -35,6 +42,11 @@ export class ReaderPage extends BasePage {
     this.tocItems = page.locator('.toc-list [role="treeitem"]');
     this.searchResults = page.locator('.search-results li[role="button"]');
     this.annotationPopup = page.locator('.selection-popup');
+    // The dictionary shares Popup's `.popup-container` chrome with the
+    // translator, so key off its results header test id instead.
+    this.dictionaryPopup = page.locator('.popup-container:has([data-testid="dict-title"])');
+    this.translatorPopup = page.locator('.popup-container:has(h1:text-is("Original Text"))');
+    this.proofreadPopup = page.locator('.popup-container:has-text("Selected text:")');
     this.noteEditor = page.locator('.note-editor-container');
     this.annotationItems = page.locator('li.booknote-item[role="button"]');
   }
@@ -64,6 +76,25 @@ export class ReaderPage extends BasePage {
     }
   }
 
+  /** Whether the header bar is currently taking pointer events. */
+  async isHeaderRevealed(): Promise<boolean> {
+    // The bar auto-hides with `opacity-0 pointer-events-none`, which Playwright
+    // still reports as visible (it keeps a bounding box), so read the styles.
+    return this.headerBar.evaluate((bar) => {
+      const style = getComputedStyle(bar);
+      return style.pointerEvents !== 'none' && Number(style.opacity) > 0.1;
+    });
+  }
+
+  /** Hide the header and footer bars by tapping the middle of the page. */
+  async hideChrome(): Promise<void> {
+    if (!(await this.isHeaderRevealed())) return;
+    const box = await this.viewer.boundingBox();
+    if (!box) return;
+    await this.page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect.poll(() => this.isHeaderRevealed()).toBe(false);
+  }
+
   // --- pagination & progress ---
 
   async nextPage(): Promise<void> {
@@ -75,18 +106,23 @@ export class ReaderPage extends BasePage {
   }
 
   /**
-   * Current reading position as a number parsed from the footer's
-   * "Reading Progress" label. The label is in the DOM regardless of whether
-   * the footer is visually revealed, so no reveal is needed.
+   * Current reading position as a number parsed from the footer's page-jump
+   * label ("94 / 251" with the default fraction progress style). The label is
+   * in the DOM regardless of whether the footer is visually revealed, so no
+   * reveal is needed.
    */
   async readingProgress(): Promise<number> {
-    const label =
-      (await this.page
-        .locator('span[title="Reading Progress"]')
-        .first()
-        .getAttribute('aria-label')) ?? '';
-    const match = label.match(/(\d+(?:\.\d+)?)/);
+    const value = await this.pageJumpInput.inputValue();
+    const match = value.match(/(\d+(?:\.\d+)?)/);
     return match ? Number(match[1]) : Number.NaN;
+  }
+
+  /** Jump to a page by typing into the footer's page-jump input. */
+  async goToPage(page: number): Promise<void> {
+    await this.revealFooter();
+    await this.pageJumpInput.click();
+    await this.pageJumpInput.fill(String(page));
+    await this.pageJumpInput.press('Enter');
   }
 
   // --- sidebar / table of contents ---
@@ -137,6 +173,108 @@ export class ReaderPage extends BasePage {
 
     await this.page.keyboard.press('Escape');
     return { before, after };
+  }
+
+  /**
+   * Add an annotation tool to the selection toolbar via
+   * Settings -> Behavior -> Customize Toolbar, by its chip label.
+   */
+  async enableAnnotationTool(name: string): Promise<void> {
+    await this.revealHeader();
+    await this.headerBar.locator('button[aria-label="Font & Layout"]').click();
+    await this.page.locator('[data-tab="Control"]').click();
+    await this.page.locator('[data-setting-id="settings.control.customizeToolbar"]').click();
+    await this.page.getByRole('button', { name, exact: true }).click();
+    await this.page.keyboard.press('Escape');
+  }
+
+  /**
+   * Turn the in-page header band (the running section title) on or off from
+   * the settings dialog. With it off the book text moves up to the compact top
+   * margin, right under the header bar's hover strip.
+   */
+  async setPageHeaderVisible(visible: boolean): Promise<void> {
+    await this.revealHeader();
+    await this.headerBar.locator('button[aria-label="Font & Layout"]').click();
+    await this.page.locator('[data-tab="Layout"]').click();
+
+    const toggle = this.page
+      .locator('[data-setting-id="settings.layout.showHeader"]')
+      .getByRole('checkbox')
+      .first();
+    await toggle.waitFor({ state: 'visible' });
+    await toggle.setChecked(visible);
+
+    await this.page.keyboard.press('Escape');
+    await this.hideChrome();
+  }
+
+  /**
+   * Geometry of the topmost line of book text on the current page, in
+   * top-document coordinates, plus whatever element the browser hit-tests at
+   * its middle (`'reader'` when the press would reach the book).
+   *
+   * Reading the line out of the section document and asking the top document
+   * who owns that point runs the same hit test the pointer pipeline uses, which
+   * is what an overlay strip breaks.
+   */
+  private async firstLineHitTest(): Promise<{ top: number; owner: string } | null> {
+    return this.page.evaluate(() => {
+      const view = document.querySelector('foliate-view') as HTMLElement & {
+        renderer: { getContents: () => { doc?: Document }[] };
+      };
+      if (!view) return null;
+      const lines: { top: number; left: number; height: number; width: number }[] = [];
+      for (const { doc } of view.renderer.getContents()) {
+        const frame = doc?.defaultView?.frameElement?.getBoundingClientRect();
+        if (!doc || !frame) continue;
+        const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+          if ((node.textContent ?? '').trim().length < 10) continue;
+          const range = doc.createRange();
+          range.selectNodeContents(node);
+          for (const rect of range.getClientRects()) {
+            // Skip slivers (inline markup) and anything off the visible page.
+            if (rect.width < 40 || rect.height < 5) continue;
+            const left = frame.left + rect.left;
+            const top = frame.top + rect.top;
+            if (left < 0 || left > window.innerWidth - 40) continue;
+            if (top < 0 || top + rect.height > window.innerHeight) continue;
+            lines.push({ top, left, height: rect.height, width: rect.width });
+          }
+        }
+      }
+      const line = lines.sort((a, b) => a.top - b.top)[0];
+      if (!line) return null;
+      const el = document.elementFromPoint(
+        line.left + Math.min(line.width, 160) / 2,
+        line.top + line.height / 2,
+      );
+      const viewer = document.querySelector('.foliate-viewer');
+      const owner =
+        el && viewer?.contains(el) ? 'reader' : `${el?.tagName}.${String(el?.className)}`;
+      return { top: line.top, owner };
+    });
+  }
+
+  /**
+   * Page forward until the topmost line of the page starts within `maxTop` px
+   * of the cell top, then hit-test it (see {@link firstLineHitTest}). A chapter
+   * opens on a heading that sits well below the top, so the caller cannot
+   * assume the first page has a line up there.
+   */
+  async firstLineHitTestNearTop(
+    maxTop: number,
+    maxPages = 8,
+  ): Promise<{ top: number; owner: string } | null> {
+    let hit = await this.firstLineHitTest();
+    for (let i = 0; i < maxPages && (!hit || hit.top >= maxTop); i += 1) {
+      await this.nextPage();
+      await this.page.waitForTimeout(400);
+      hit = await this.firstLineHitTest();
+    }
+    return hit;
   }
 
   // --- bookmarks ---
@@ -263,6 +401,11 @@ export class ReaderPage extends BasePage {
     await this.notebook.getByRole('button', { name: 'Save' }).click();
   }
 
+  /** Read the system clipboard (the context must grant `clipboard-read`). */
+  async readClipboard(): Promise<string> {
+    return this.page.evaluate(() => navigator.clipboard.readText());
+  }
+
   /** Dismiss the annotation popup if it is open. */
   async dismissPopup(): Promise<void> {
     if (await this.annotationPopup.isVisible().catch(() => false)) {
@@ -272,11 +415,27 @@ export class ReaderPage extends BasePage {
   }
 
   /**
+   * Close the notebook pane if it is open. An unpinned notebook renders a
+   * full-screen capture overlay that would swallow clicks aimed at the
+   * sidebar, so tests must close it before driving other panels.
+   */
+  async closeNotebook(): Promise<void> {
+    if (await this.notebook.isVisible().catch(() => false)) {
+      await this.page
+        .locator('.overlay[data-capture-blocking-overlay]')
+        .last()
+        .click({ position: { x: 8, y: 200 } });
+      await this.notebook.waitFor({ state: 'hidden' }).catch(() => {});
+    }
+  }
+
+  /**
    * Open the sidebar's "Annotate" tab, which lists the book's annotations
    * (assert against {@link annotationItems} afterwards).
    */
   async openAnnotationsTab(): Promise<void> {
     await this.dismissPopup();
+    await this.closeNotebook();
     await this.openSidebar();
     await this.sidebar.locator('[aria-label="Annotate"]').click();
   }

@@ -38,7 +38,12 @@ import {
 import { getOSPlatform, isContentURI, isFileURI, isValidURL } from '@/utils/misc';
 import { getDirPath, getFilename } from '@/utils/path';
 import { NativeFile, RemoteFile } from '@/utils/file';
-import { copyURIToPath, getStorefrontRegionCode, saveImageToGallery } from '@/utils/bridge';
+import {
+  copyURIToPath,
+  getStorefrontRegionCode,
+  hasAmbientLightSensor,
+  saveImageToGallery,
+} from '@/utils/bridge';
 import { galleryFileName } from '@/utils/image';
 import { copyFiles } from '@/utils/files';
 import { detectViewTransitionGroup, detectViewTransitionsAPI } from '@/utils/viewTransition';
@@ -454,7 +459,7 @@ export const nativeFileSystem: FileSystem = {
       }
     }
   },
-  async readDir(path: string, base: BaseDir) {
+  async readDir(path: string, base: BaseDir, extensions?: string[]) {
     const { fp, baseDir } = this.resolvePath(path, base);
 
     const getRelativePath = (filePath: string, basePath: string): string => {
@@ -468,13 +473,17 @@ export const nativeFileSystem: FileSystem = {
       return relativePath;
     };
 
-    // Use Rust WalkDir for massive performance gain on absolute paths
+    // Use Rust WalkDir for massive performance gain on absolute paths.
+    // `extensions` filters inside the walk, so non-matching files (e.g. the
+    // covers and metadata sidecars of a Calibre-style folder) are neither
+    // stat'ed nor serialized over IPC. The JS fallback below ignores the
+    // filter — callers that pass it must still tolerate extra entries.
     if (!baseDir || baseDir === 0) {
       try {
         const files = await invoke<{ path: string; size: number }[]>('read_dir', {
           path: fp,
           recursive: true,
-          extensions: ['*'],
+          extensions: extensions?.length ? extensions : ['*'],
         });
 
         return files.map((file) => ({
@@ -573,6 +582,7 @@ export class NativeAppService extends BaseAppService {
   override hasOrientationLock =
     (OS_TYPE === 'ios' && getOSPlatform() === 'ios') || OS_TYPE === 'android';
   override hasScreenBrightness = OS_TYPE === 'ios' || OS_TYPE === 'android';
+  override hasAmbientLightSensor = false;
   override hasIAP = OS_TYPE === 'ios' || (OS_TYPE === 'android' && DIST_CHANNEL === 'playstore');
   // CustomizeRootDir has a blocker on macOS App Store builds due to Security Scoped Resource restrictions.
   // See: https://github.com/tauri-apps/tauri/issues/3716
@@ -657,6 +667,15 @@ export class NativeAppService extends BaseAppService {
         // storefrontRegionCode as null and let downstream features that
         // depend on region degrade gracefully.
         console.warn('[nativeAppService] getStorefrontRegionCode failed:', err);
+      }
+    }
+    if (this.isAndroidApp) {
+      try {
+        const res = await hasAmbientLightSensor();
+        this.hasAmbientLightSensor = !!res.available;
+      } catch (err) {
+        console.warn('[nativeAppService] hasAmbientLightSensor failed:', err);
+        this.hasAmbientLightSensor = false;
       }
     }
     await this.prepareBooksDir();

@@ -41,6 +41,12 @@ vi.mock('@/services/sync/providers/gdrive/auth/webTokenStore', async (importOrig
   ...(await importOriginal<typeof import('@/services/sync/providers/gdrive/auth/webTokenStore')>()),
   hasValidWebDriveToken: vi.fn(() => false),
 }));
+// jsdom is neither an iOS nor a macOS Tauri app, so the real gate would say
+// false anyway; the mock makes the platform dependency explicit and togglable.
+vi.mock('@/services/sync/providers/icloud/buildICloudProvider', () => ({
+  isICloudSupportedPlatform: vi.fn(() => false),
+  buildICloudProvider: vi.fn(async () => null),
+}));
 
 import { isWebAppPlatform } from '@/services/environment';
 import { hasValidWebDriveToken } from '@/services/sync/providers/gdrive/auth/webTokenStore';
@@ -274,5 +280,9 @@ describe('getReadyFileSyncBackends', () => {
   test('keeps configured third-party sync available on the free plan in this build', () => {
     setCachedUserPlan('free');
     expect(getReadyFileSyncBackends(settings)).toEqual(['webdav', 'gdrive']);
+  });
+
+  test('rules icloud out off Apple platforms (canBackendRun false)', () => {
+    expect(canBackendRun('icloud')).toBe(false);
   });
 });

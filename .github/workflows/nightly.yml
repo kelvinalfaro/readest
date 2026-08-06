@@ -65,7 +65,10 @@ jobs:
             release: macos
             arch: aarch64
             rust_target: x86_64-apple-darwin,aarch64-apple-darwin
-            args: '--target universal-apple-darwin'
+            # --config layers the iCloud overlay (Developer ID provisioning
+            # profile + entitlements) onto the direct-distribution build; see
+            # src-tauri/tauri.macos-nonestore.conf.json.
+            args: '--target universal-apple-darwin --config src-tauri/tauri.macos-nonestore.conf.json'
           - os: windows-latest
             release: windows
             arch: x86_64
@@ -91,7 +94,7 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: setup pnpm
-        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
       - name: setup node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -101,7 +104,7 @@ jobs:
 
       - name: setup Java (for Android build only)
         if: matrix.config.release == 'android'
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -216,16 +219,24 @@ jobs:
       # Linux uses the truly-portable AppImage tauri CLI fork (mirrors
       # release.yml). The nightly version is patched BEFORE `tauri build` so the
       # bundle filenames carry the stamp.
+      #
+      # PINNED to a rev, not the branch tip: on 2026-07-31 the fork rewrote the
+      # sharun bundler to re-download quick-sharun.sh on EVERY build instead of
+      # only when it is missing from the cache. That defeated the cache seed
+      # below, so both Linux legs pulled the moving main-branch script again and
+      # hung under Xvfb until the 45min step timeout (#4906). This rev is the
+      # last one that keeps the cache check, and it built every nightly through
+      # 2026-07-30. Bump it only together with a Linux AppImage build check.
       - name: Override tauri-cli with custom AppImage format (Linux)
         if: matrix.config.release == 'linux'
-        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --branch feat/truly-portable-appimage --force
+        run: cargo install tauri-cli --git https://github.com/tauri-apps/tauri --rev 162626969b382d52faebdf6c7264460bd9a47d1f --force
 
-      # The truly-portable AppImage bundler downloads quick-sharun.sh from
-      # Anylinux-AppImages@main ONLY when it is not already in the tauri tools
-      # cache. An upstream strace-mode change (2026-06-29) made bundling launch
-      # the app under Xvfb and hang forever, timing out the Linux legs (#4906).
-      # Seed the cache with the last known-good revision so the bundler never
-      # fetches the moving main-branch script.
+      # The truly-portable AppImage bundler at the rev pinned above downloads
+      # quick-sharun.sh from Anylinux-AppImages@main ONLY when it is not already
+      # in the tauri tools cache. An upstream strace-mode change (2026-06-29)
+      # made bundling launch the app under Xvfb and hang forever, timing out the
+      # Linux legs (#4906). Seed the cache with the last known-good revision so
+      # the bundler never fetches the moving main-branch script.
       - name: pin quick-sharun.sh for AppImage bundling (Linux)
         if: matrix.config.release == 'linux'
         run: |

@@ -21,6 +21,10 @@ export interface TTSCapabilities {
   gapControl: boolean;
   // Rate changes apply to in-flight audio without restarting the session.
   liveRateChange: boolean;
+  // Consecutive blocks are one continuous recording rather than separate
+  // utterances, so the controller must not insert its own pauses between them —
+  // the recording already contains the pauses its narrator made.
+  continuousTimeline?: boolean;
 }
 
 export interface TTSClient {
@@ -31,7 +35,11 @@ export interface TTSClient {
   speak(ssml: string, signal: AbortSignal, preload?: boolean): AsyncIterable<TTSMessageEvent>;
   pause(): Promise<boolean>;
   resume(): Promise<boolean>;
-  stop(): Promise<void>;
+  // `handover` marks the stop the controller performs between two consecutive
+  // utterances of the same session, as opposed to a real stop. An engine whose
+  // timeline is continuous uses it to stay rolling instead of silencing itself;
+  // engines that synthesize per utterance must stop either way and ignore it.
+  stop(handover?: boolean): Promise<void>;
   setPrimaryLang(lang: string): void;
   setRate(rate: number): Promise<void>;
   setPitch(pitch: number): Promise<void>;
@@ -53,4 +61,8 @@ export interface TTSClient {
   // when capabilities.mediaClock is true; the section timeline treats absence
   // as sentence-granularity positions.
   getChunkPosition?(): number | null;
+  // How far through the chunk now sounding, 0..1. Reported as a single value
+  // rather than position/duration so it cannot skew between two calls, and so a
+  // playback rate change cannot be applied to one but not the other.
+  getChunkProgress?(): number | null;
 }

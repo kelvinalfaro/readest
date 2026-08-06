@@ -40,7 +40,8 @@ class UseBackgroundAudioRequestArgs: Decodable {
   let enabled: Bool
 }
 
-class SetTextSelectionSuppressedRequestArgs: Decodable {
+class SetSelectionSuppressedRequestArgs: Decodable {
+  let target: String
   let suppressed: Bool
 }
 
@@ -71,6 +72,11 @@ class CopyUriToPathRequestArgs: Decodable {
 
 class ReadShareClipHtmlArgs: Decodable {
   let fileName: String
+}
+
+struct ICloudEnsureDownloadedArgs: Decodable {
+  let path: String
+  let timeoutMs: Int?
 }
 
 struct InitializeRequest: Decodable {
@@ -280,6 +286,52 @@ class MediaKeyHandler {
     commandCenter.nextTrackCommand.removeTarget(nil)
     commandCenter.previousTrackCommand.removeTarget(nil)
     logger.log("MediaKeyHandler: stopped")
+  }
+
+  private func forward(_ name: String) {
+    DispatchQueue.main.async { [weak self] in
+      self?.webView?.evaluateJavaScript(
+        "try { window.onNativeKeyDown('\(name)', 0); } catch (_) {}", completionHandler: nil)
+    }
+  }
+}
+
+// Forwards Apple Pencil gestures to JS as native page-turner keys (#5501).
+// Double tap: Pencil 2 / Pro; squeeze: Pencil Pro on iPadOS 17.5+. The
+// system-level pencil preference is honored when set to Off (.ignore); any
+// other preferred action fires the user's in-app binding, since Readest has
+// no drawing tools the system actions could apply to. Unlike MediaKeyHandler
+// this is passive (no MPRemoteCommandCenter claim, never fires on iPhone),
+// so it stays attached for the app's lifetime.
+class PencilGestureHandler: NSObject, UIPencilInteractionDelegate {
+  private weak var webView: WKWebView?
+
+  init(webView: WKWebView) {
+    self.webView = webView
+  }
+
+  // iOS 15.0-17.4 double tap; on 17.5+ the system calls didReceiveTap instead.
+  @available(iOS, deprecated: 17.5)
+  func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
+    guard UIPencilInteraction.preferredTapAction != .ignore else { return }
+    forward("PencilDoubleTap")
+  }
+
+  @available(iOS 17.5, *)
+  func pencilInteraction(
+    _ interaction: UIPencilInteraction, didReceiveTap tap: UIPencilInteraction.Tap
+  ) {
+    guard UIPencilInteraction.preferredTapAction != .ignore else { return }
+    forward("PencilDoubleTap")
+  }
+
+  @available(iOS 17.5, *)
+  func pencilInteraction(
+    _ interaction: UIPencilInteraction, didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
+  ) {
+    guard squeeze.phase == .ended else { return }
+    guard UIPencilInteraction.preferredSqueezeAction != .ignore else { return }
+    forward("PencilSqueeze")
   }
 
   private func forward(_ name: String) {
@@ -521,6 +573,7 @@ class NativeBridgePlugin: Plugin {
   private var currentOrientationMask: UIInterfaceOrientationMask = .all
   private var originalDelegate: UIApplicationDelegate?
   private var webViewLifecycleManager: WebViewLifecycleManager?
+  private var pencilGestureHandler: PencilGestureHandler?
   private var traitChangeRegistered = false
 
   // Screen-brightness management. `UIScreen.main.brightness` is a *global*
@@ -552,6 +605,14 @@ class NativeBridgePlugin: Plugin {
     webViewLifecycleManager = WebViewLifecycleManager()
     webViewLifecycleManager?.startMonitoring(webView: webview)
     logger.log("NativeBridgePlugin: WebView lifecycle monitoring activated")
+
+    // Forward Apple Pencil double-tap / squeeze gestures as native keys for
+    // the hardware page turner (#5501).
+    let pencilHandler = PencilGestureHandler(webView: webview)
+    pencilGestureHandler = pencilHandler
+    let pencilInteraction = UIPencilInteraction()
+    pencilInteraction.delegate = pencilHandler
+    webview.addInteraction(pencilInteraction)
 
     // The WKWebView never fires the `prefers-color-scheme` media query
     // `change` event while the app stays foregrounded, so observe the
@@ -857,13 +918,17 @@ class NativeBridgePlugin: Plugin {
     }
   }
 
-  // Instant-highlight mode owns the touch long-press: suppress the system
-  // text selection for non-editable content so it can never race the app's
-  // hold-to-highlight gesture. See TextSelectionSuppressor.
-  @objc public func set_text_selection_suppressed(_ invoke: Invoke) throws {
-    let args = try invoke.parseArgs(SetTextSelectionSuppressedRequestArgs.self)
-    DispatchQueue.main.async {
-      TextSelectionSuppressor.setSuppressed(args.suppressed)
+  // Suppress a piece of the OS selection UI. target "gesture": the long-press
+  // text selection for non-editable content, while instant-highlight owns the
+  // hold (see TextSelectionSuppressor). target "menu" is a no-op here — the
+  // iOS selection menu is suppressed unconditionally by ContextMenuSuppressor,
+  // which probes editability natively at menu-build time.
+  @objc public func set_selection_suppressed(_ invoke: Invoke) throws {
+    let args = try invoke.parseArgs(SetSelectionSuppressedRequestArgs.self)
+    if args.target == "gesture" {
+      DispatchQueue.main.async {
+        TextSelectionSuppressor.setSuppressed(args.suppressed)
+      }
     }
     invoke.resolve()
   }
@@ -1175,6 +1240,19 @@ class NativeBridgePlugin: Plugin {
         UIScreen.main.brightness = CGFloat(brightness)
       }
     }
+    invoke.resolve(["success": true])
+  }
+
+  /// No public ambient-light API on iOS; Ambient Mode is Android-only.
+  @objc public func has_ambient_light_sensor(_ invoke: Invoke) {
+    invoke.resolve(["available": false])
+  }
+
+  @objc public func start_ambient_light_updates(_ invoke: Invoke) {
+    invoke.resolve(["success": false, "error": "unsupported"])
+  }
+
+  @objc public func stop_ambient_light_updates(_ invoke: Invoke) {
     invoke.resolve(["success": true])
   }
 
@@ -1574,6 +1652,64 @@ class NativeBridgePlugin: Plugin {
       invoke.resolve(["html": html])
     } else {
       invoke.resolve([:])
+    }
+  }
+
+  /// Resolve the default ubiquity container (nil = the first container in the
+  /// entitlements, iCloud.com.bilingify.readest) and ensure Documents/ exists.
+  /// url(forUbiquityContainerIdentifier:) may block, so hop off the main
+  /// thread before touching it.
+  @objc public func icloud_container_status(_ invoke: Invoke) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      guard let container = FileManager.default.url(forUbiquityContainerIdentifier: nil) else {
+        invoke.resolve(["available": false])
+        return
+      }
+      let documents = container.appendingPathComponent("Documents", isDirectory: true)
+      do {
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+      } catch {
+        invoke.reject("Failed to create iCloud Documents: \(error.localizedDescription)")
+        return
+      }
+      invoke.resolve(["available": true, "documentsPath": documents.path])
+    }
+  }
+
+  /// Materialise an evicted item (`.name.icloud` placeholder), then poll for
+  /// the real file. "notFound" = neither file nor placeholder exists; the JS
+  /// provider maps that to the engine's 404-null contract.
+  @objc public func icloud_ensure_downloaded(_ invoke: Invoke) {
+    guard let args = try? invoke.parseArgs(ICloudEnsureDownloadedArgs.self) else {
+      return invoke.reject("Failed to parse arguments")
+    }
+    DispatchQueue.global(qos: .userInitiated).async {
+      let fm = FileManager.default
+      if fm.fileExists(atPath: args.path) {
+        invoke.resolve(["status": "ready"])
+        return
+      }
+      let url = URL(fileURLWithPath: args.path)
+      let placeholder = url.deletingLastPathComponent()
+        .appendingPathComponent(".\(url.lastPathComponent).icloud")
+      guard fm.fileExists(atPath: placeholder.path) else {
+        invoke.resolve(["status": "notFound"])
+        return
+      }
+      // Either URL form is accepted by the daemon; try the logical path
+      // first, then the placeholder, and let the poll loop below decide.
+      if (try? fm.startDownloadingUbiquitousItem(at: url)) == nil {
+        try? fm.startDownloadingUbiquitousItem(at: placeholder)
+      }
+      let deadline = Date().addingTimeInterval(Double(args.timeoutMs ?? 60000) / 1000)
+      while Date() < deadline {
+        if fm.fileExists(atPath: args.path) {
+          invoke.resolve(["status": "ready"])
+          return
+        }
+        Thread.sleep(forTimeInterval: 0.25)
+      }
+      invoke.resolve(["status": "timeout"])
     }
   }
 

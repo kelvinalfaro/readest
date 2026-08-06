@@ -200,3 +200,43 @@ describe('BookDetailView file path row', () => {
     expect(queryByText('File Path')).toBeNull();
   });
 });
+
+describe('BookDetailView page count', () => {
+  // The page count is only known once the book has been laid out by the
+  // reader, so it rides on book.progress ([current, total]) instead of being
+  // computed at import time (#5516).
+  it('shows the total page count of an opened book', () => {
+    const { getByText } = renderView({ book: makeBook({ progress: [42, 317] }) });
+
+    expect(getByText('Pages')).toBeTruthy();
+    expect(getByText('317')).toBeTruthy();
+  });
+
+  it('falls back to Unknown for a book that has never been opened', () => {
+    const { getByText } = renderView({ book: makeBook() });
+
+    const label = getByText('Pages');
+    expect(label.parentElement!.textContent).toContain('Unknown');
+  });
+});
+
+describe('BookDetailView tags and subjects', () => {
+  it('normalizes clicked tag and subject values before shelf navigation', () => {
+    const onMetadataValueClick = vi.fn();
+    const { getByText } = renderView({
+      book: makeBook({ tags: [' Favorite '] }),
+      metadata: {
+        title: 'Test Book',
+        author: 'Test Author',
+        language: 'en',
+        subject: ['History'],
+      },
+      onMetadataValueClick,
+    });
+
+    fireEvent.click(getByText('History'));
+    expect(onMetadataValueClick).toHaveBeenCalledWith('subject', 'History');
+    fireEvent.click(getByText('Favorite'));
+    expect(onMetadataValueClick).toHaveBeenCalledWith('tag', 'Favorite');
+  });
+});

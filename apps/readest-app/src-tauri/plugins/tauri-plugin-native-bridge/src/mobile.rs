@@ -68,12 +68,12 @@ impl<R: Runtime> NativeBridge<R> {
 }
 
 impl<R: Runtime> NativeBridge<R> {
-    pub fn set_text_selection_suppressed(
+    pub fn set_selection_suppressed(
         &self,
-        payload: SetTextSelectionSuppressedRequest,
+        payload: SetSelectionSuppressedRequest,
     ) -> crate::Result<()> {
         self.0
-            .run_mobile_plugin("set_text_selection_suppressed", payload)
+            .run_mobile_plugin("set_selection_suppressed", payload)
             .map_err(Into::into)
     }
 }
@@ -220,6 +220,30 @@ impl<R: Runtime> NativeBridge<R> {
 }
 
 impl<R: Runtime> NativeBridge<R> {
+    pub fn has_ambient_light_sensor(&self) -> crate::Result<HasAmbientLightSensorResponse> {
+        self.0
+            .run_mobile_plugin("has_ambient_light_sensor", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn start_ambient_light_updates(&self) -> crate::Result<AmbientLightUpdatesResponse> {
+        self.0
+            .run_mobile_plugin("start_ambient_light_updates", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn stop_ambient_light_updates(&self) -> crate::Result<AmbientLightUpdatesResponse> {
+        self.0
+            .run_mobile_plugin("stop_ambient_light_updates", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
     pub fn get_external_sdcard_path(&self) -> crate::Result<GetExternalSDCardPathResponse> {
         self.0
             .run_mobile_plugin("get_external_sdcard_path", ())
@@ -253,6 +277,17 @@ impl<R: Runtime> NativeBridge<R> {
     pub fn select_directory(&self) -> crate::Result<SelectDirectoryResponse> {
         self.0
             .run_mobile_plugin("select_directory", ())
+            .map_err(Into::into)
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    // Android only. Fire-and-forget: the picked URIs are delivered via the
+    // `file-picker-result` plugin event so they survive activity/process
+    // recreation behind the system picker (#1217).
+    pub fn show_file_picker(&self) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin("show_file_picker", ())
             .map_err(Into::into)
     }
 }
@@ -402,5 +437,22 @@ impl<R: Runtime> NativeBridge<R> {
         base64::engine::general_purpose::STANDARD
             .decode(response.data)
             .map_err(|e| crate::Error::NativeBridgeError(format!("invalid base64 PNG: {e}")))
+    }
+}
+
+impl<R: Runtime> NativeBridge<R> {
+    pub fn icloud_container_status(&self) -> crate::Result<ICloudContainerStatusResponse> {
+        self.0
+            .run_mobile_plugin("icloud_container_status", ())
+            .map_err(Into::into)
+    }
+
+    pub fn icloud_ensure_downloaded(
+        &self,
+        payload: ICloudEnsureDownloadedRequest,
+    ) -> crate::Result<ICloudEnsureDownloadedResponse> {
+        self.0
+            .run_mobile_plugin("icloud_ensure_downloaded", payload)
+            .map_err(Into::into)
     }
 }

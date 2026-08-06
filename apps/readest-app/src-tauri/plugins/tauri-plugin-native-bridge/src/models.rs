@@ -5,6 +5,10 @@ use std::collections::HashMap;
 #[serde(rename_all = "camelCase")]
 pub struct AuthRequest {
     pub auth_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callback_scheme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callback_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -54,9 +58,13 @@ pub struct UseBackgroundAudioRequest {
     pub enabled: bool,
 }
 
+/// Which piece of the OS selection UI to gate: "gesture" suppresses the
+/// long-press text-selection gesture (iOS, instant highlight), "menu"
+/// suppresses the floating selection toolbar (Android, #5427).
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SetTextSelectionSuppressedRequest {
+pub struct SetSelectionSuppressedRequest {
+    pub target: String,
     pub suppressed: bool,
 }
 
@@ -219,6 +227,20 @@ pub struct SetScreenBrightnessRequest {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetScreenBrightnessResponse {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HasAmbientLightSensorResponse {
+    pub available: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AmbientLightUpdatesResponse {
     pub success: bool,
     pub error: Option<String>,
 }
@@ -484,4 +506,32 @@ pub struct CaptureWebviewRegionRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CaptureWebviewRegionResponse {
     pub data: String,
+}
+
+/// iCloud ubiquity-container probe result. `documents_path` is the absolute
+/// path of the container's Documents folder (created on first probe);
+/// `available: false` covers no-iCloud-session, missing entitlement, and
+/// unsupported platforms alike.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ICloudContainerStatusResponse {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ICloudEnsureDownloadedRequest {
+    /// Absolute path inside the ubiquity container.
+    pub path: String,
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ICloudEnsureDownloadedResponse {
+    /// "ready" | "notFound" | "timeout"
+    pub status: String,
 }
