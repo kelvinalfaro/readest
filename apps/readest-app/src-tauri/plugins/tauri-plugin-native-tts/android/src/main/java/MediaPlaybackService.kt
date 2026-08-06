@@ -38,6 +38,25 @@ import app.tauri.plugin.JSObject
 import java.io.File
 import java.io.FileOutputStream
 
+internal object MediaSessionActivationState {
+    @Volatile
+    private var desiredActive = false
+
+    fun requestActivation() {
+        desiredActive = true
+    }
+
+    fun requestDeactivation() {
+        desiredActive = false
+    }
+
+    fun isActivationDesired(): Boolean = desiredActive
+
+    fun resetForTest() {
+        desiredActive = false
+    }
+}
+
 class MediaPlaybackService : MediaBrowserServiceCompat() {
     private var mediaSession: MediaSessionCompat? = null
     private lateinit var player: ExoPlayer
@@ -233,9 +252,20 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         // stopService neither runs onDestroy nor clears the foreground
         // notification, so playback teardown has to happen on the live
         // instance.
+        fun requestActivation() {
+            MediaSessionActivationState.requestActivation()
+        }
+
         fun requestDeactivation() {
+            MediaSessionActivationState.requestDeactivation()
             val service = instance ?: return
-            Handler(Looper.getMainLooper()).post { service.deactivateSession() }
+            Handler(Looper.getMainLooper()).post {
+                // A newer start may have arrived while this main-thread task
+                // was queued; never let an old stop tear down the new session.
+                if (!MediaSessionActivationState.isActivationDesired()) {
+                    service.deactivateSession()
+                }
+            }
         }
 
         // Deliver metadata/state updates to the live service in-process rather
@@ -670,7 +700,16 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_ACTIVATE_SESSION -> {
-                activateSession()
+                if (MediaSessionActivationState.isActivationDesired()) {
+                    activateSession()
+                } else {
+                    // startForegroundService was already issued before the
+                    // stop arrived. Satisfy its foreground contract, then
+                    // discard the stale activation without reviving playback.
+                    showNotification(PlaybackStateCompat.STATE_PAUSED)
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                    stopSelf(startId)
+                }
             }
             Intent.ACTION_MEDIA_BUTTON -> {
                 if (sessionActive) {

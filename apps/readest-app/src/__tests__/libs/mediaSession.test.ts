@@ -148,6 +148,67 @@ describe('TauriMediaSession.setActive', () => {
     });
   });
 
+  test('rejects activation when the native foreground service cannot start', async () => {
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'plugin:native-tts|set_media_session_active') {
+        throw new Error('foreground start denied');
+      }
+      return { postNotification: 'granted' } as unknown;
+    });
+
+    const session = new TauriMediaSession();
+    await expect(session.setActive({ active: true })).rejects.toThrow('foreground start denied');
+    expect(addPluginListener).not.toHaveBeenCalled();
+  });
+
+  test('activates the native foreground service before listener initialization', async () => {
+    let releaseListener!: () => void;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'plugin:native-tts|checkPermissions') {
+        return { postNotification: 'granted' } as unknown;
+      }
+      return undefined as unknown;
+    });
+    vi.mocked(addPluginListener).mockImplementationOnce(
+      () =>
+        new Promise<PluginListener>((resolve) => {
+          releaseListener = () => resolve({ unregister: vi.fn() } as unknown as PluginListener);
+        }),
+    );
+
+    const session = new TauriMediaSession();
+    const activation = session.setActive({ active: true });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledWith('plugin:native-tts|set_media_session_active', {
+      payload: { active: true },
+    });
+    releaseListener();
+    await activation;
+  });
+
+  test('activates the native foreground service before a deferred permission check', async () => {
+    let releasePermission!: () => void;
+    vi.mocked(invoke).mockImplementation(async (cmd: string) => {
+      if (cmd === 'plugin:native-tts|checkPermissions') {
+        return new Promise((resolve) => {
+          releasePermission = () => resolve({ postNotification: 'granted' });
+        }) as never;
+      }
+      return undefined as unknown;
+    });
+
+    const session = new TauriMediaSession();
+    const activation = session.setActive({ active: true });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    expect(invoke).toHaveBeenCalledWith('plugin:native-tts|set_media_session_active', {
+      payload: { active: true },
+    });
+    releasePermission();
+    await activation;
+  });
+
   test('does not re-prompt once the permission is already decided', async () => {
     vi.mocked(invoke).mockImplementation(async (cmd: string) => {
       if (cmd === 'plugin:native-tts|checkPermissions') {

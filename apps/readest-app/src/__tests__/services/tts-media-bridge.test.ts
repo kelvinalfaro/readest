@@ -11,7 +11,7 @@ vi.mock('@/services/tts/carPlaySession', () => ({
 
 import { TTSMediaBridge } from '@/services/tts/ttsMediaBridge';
 import { fetchImageAsBase64 } from '@/utils/image';
-import { TauriMediaSession } from '@/libs/mediaSession';
+import { TauriMediaSession, type MediaSessionState } from '@/libs/mediaSession';
 import type { TTSController } from '@/services/tts/TTSController';
 
 // A controller stand-in: EventTarget + the surface the bridge consumes.
@@ -87,6 +87,7 @@ describe('TTSMediaBridge', () => {
   let bridge: TTSMediaBridge;
 
   beforeEach(() => {
+    vi.mocked(fetchImageAsBase64).mockResolvedValue('data:image/png;base64,x');
     controller = new FakeController();
     fake = makeFakeMediaSession();
     bridge = new TTSMediaBridge(() => fake as unknown as MediaSession);
@@ -383,6 +384,93 @@ describe('TTSMediaBridge', () => {
 });
 
 describe('TTSMediaBridge bind teardown race (READEST-1A)', () => {
+  test('activates the foreground session before a deferred cover fetch resolves', async () => {
+    let resolveCover!: (value: string) => void;
+    vi.mocked(fetchImageAsBase64).mockReturnValueOnce(
+      new Promise<string>((resolve) => {
+        resolveCover = resolve;
+      }),
+    );
+    const tauriSession = new TauriMediaSession();
+    tauriSession.setActive = vi.fn().mockResolvedValue(undefined);
+    tauriSession.updateMetadata = vi.fn().mockResolvedValue(undefined);
+    tauriSession.setActionHandler = vi.fn();
+    const bridge = new TTSMediaBridge(() => tauriSession);
+
+    await bridge.bind(new FakeController() as unknown as TTSController, meta());
+
+    expect(tauriSession.setActive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        active: true,
+        foregroundServiceTitle: 'Alice',
+        foregroundServiceText: 'Carroll',
+      }),
+    );
+    resolveCover('data:image/png;base64,cover');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  test('stop during native activation finishes inactive', async () => {
+    let releaseActivation!: () => void;
+    const states: MediaSessionState[] = [];
+    const tauriSession = new TauriMediaSession();
+    tauriSession.setActive = vi.fn(async (state: MediaSessionState) => {
+      states.push(state);
+      if (state.active) {
+        await new Promise<void>((resolve) => {
+          releaseActivation = resolve;
+        });
+      }
+    });
+    tauriSession.updateMetadata = vi.fn().mockResolvedValue(undefined);
+    tauriSession.setActionHandler = vi.fn();
+    const bridge = new TTSMediaBridge(() => tauriSession);
+
+    const binding = bridge.bind(new FakeController() as unknown as TTSController, meta());
+    await Promise.resolve();
+    bridge.unbind();
+    releaseActivation();
+    await binding;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(states.map((state) => state.active)).toEqual([true, false]);
+    expect(bridge.isBound).toBe(false);
+  });
+
+  test('rapid stop and restart leaves the newest session active', async () => {
+    let releaseFirstActivation!: () => void;
+    const states: MediaSessionState[] = [];
+    const tauriSession = new TauriMediaSession();
+    tauriSession.setActive = vi.fn(async (state: MediaSessionState) => {
+      states.push(state);
+      if (states.length === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirstActivation = resolve;
+        });
+      }
+    });
+    tauriSession.updateMetadata = vi.fn().mockResolvedValue(undefined);
+    tauriSession.setActionHandler = vi.fn();
+    const bridge = new TTSMediaBridge(() => tauriSession);
+
+    const first = bridge.bind(
+      new FakeController() as unknown as TTSController,
+      meta({ title: 'Old book' }),
+    );
+    await Promise.resolve();
+    bridge.unbind();
+    const second = bridge.bind(
+      new FakeController() as unknown as TTSController,
+      meta({ bookKey: 'new-hash', title: 'New book' }),
+    );
+    releaseFirstActivation();
+    await Promise.all([first, second]);
+
+    expect(states.map((state) => state.active)).toEqual([true, false, true]);
+    expect(states.at(-1)).toEqual(expect.objectContaining({ active: true, bookTitle: 'New book' }));
+    expect(bridge.isBound).toBe(true);
+  });
+
   test('does not crash when unbound while the cover loads', async () => {
     // A real TauriMediaSession instance so bind() takes the Tauri branch; its
     // native methods are stubbed so nothing hits `invoke`.

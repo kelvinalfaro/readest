@@ -155,6 +155,17 @@ export class TauriMediaSession {
 
   async setActive(sessionState: MediaSessionState) {
     if (sessionState.active) {
+      // Starting the native foreground service is the required operation and
+      // must precede every optional setup step, including a permission prompt
+      // that may wait for user interaction.
+      try {
+        await invoke('plugin:native-tts|set_media_session_active', {
+          payload: sessionState,
+        });
+      } catch (error) {
+        console.error('Failed to set media session active state:', error);
+        throw error;
+      }
       // The foreground-service media notification IS the lock-screen control;
       // on Android 13+ it is silently suppressed unless POST_NOTIFICATIONS is
       // granted. Request it on every activation (no-op once decided).
@@ -165,24 +176,26 @@ export class TauriMediaSession {
       } catch (error) {
         console.warn('POST_NOTIFICATIONS request failed:', error);
       }
+      // Listener registration is optional and may stall or fail independently.
       try {
         await this.initializeListeners();
       } catch (error) {
         console.warn('Media session listener init failed:', error);
       }
-    } else {
-      try {
-        await this.cleanupListeners();
-      } catch (error) {
-        console.warn('Media session listener cleanup failed:', error);
-      }
+      return;
     }
+
     try {
       await invoke('plugin:native-tts|set_media_session_active', {
         payload: sessionState,
       });
     } catch (error) {
       console.error('Failed to set media session active state:', error);
+    }
+    try {
+      await this.cleanupListeners();
+    } catch (error) {
+      console.warn('Media session listener cleanup failed:', error);
     }
   }
 

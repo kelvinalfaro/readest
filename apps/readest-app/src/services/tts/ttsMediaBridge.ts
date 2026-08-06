@@ -13,7 +13,7 @@
 
 import { buildTTSMediaMetadata } from '@/utils/ttsMetadata';
 import { fetchImageAsBase64 } from '@/utils/image';
-import { getMediaSession, TauriMediaSession } from '@/libs/mediaSession';
+import { getMediaSession, TauriMediaSession, type MediaSessionState } from '@/libs/mediaSession';
 import { isTauriAppPlatform } from '@/services/environment';
 import { getOSPlatform } from '@/utils/misc';
 import { notifyCarPlayState } from './carPlaySession';
@@ -99,6 +99,9 @@ export class TTSMediaBridge {
   // cover is often a blob/tauri URL the media session can't load; a data URL
   // always resolves. Re-sent on every metadata update (each is a full replace).
   #coverArtwork = '/icon.png';
+  #lifecycleId = 0;
+  #nativeLifecycle: Promise<void> = Promise.resolve();
+  #latestNativeMetadata: { title: string; artist: string; album: string } | null = null;
   #lastSectionLabel: string | undefined;
   #previousSectionLabel: string | undefined;
   #onSpeakMark: ((e: Event) => void) | null = null;
@@ -129,46 +132,44 @@ export class TTSMediaBridge {
       return;
     }
     this.unbind();
+    const lifecycleId = ++this.#lifecycleId;
     this.#controller = controller;
     this.#meta = meta;
     this.#mediaSession = this.#resolveMediaSession();
     if (!this.#mediaSession) return;
-    // bind() awaits below (cover fetch, setActive), during which a concurrent
+    // bind() awaits below (setActive), during which a concurrent
     // unbind() (e.g. a stop during startup) nulls #mediaSession. Use the
     // captured session for the awaited calls so they can't deref null, then
     // bail before wiring handlers onto a torn-down session (READEST-1A).
     const mediaSession = this.#mediaSession;
 
-    // Fetch the cover once as a data URL, reused by the native session and by
-    // every navigator.mediaSession metadata refresh (see #coverArtwork).
-    try {
-      this.#coverArtwork = await fetchImageAsBase64(meta.coverImageUrl || '/icon.png');
-    } catch {
-      try {
-        this.#coverArtwork = await fetchImageAsBase64('/icon.png');
-      } catch {
-        this.#coverArtwork = '';
-      }
-    }
-
     if (mediaSession instanceof TauriMediaSession) {
-      await mediaSession.setActive({
+      // Foreground ownership is the startup critical path. Cover conversion is
+      // deliberately deferred: a slow/broken image must never leave Android
+      // treating live speech as an ordinary cached process.
+      await this.#queueNativeLifecycle(mediaSession, {
         active: true,
+        foregroundServiceTitle: meta.title,
+        foregroundServiceText: meta.author,
         // bookKey is `${hash}-${uniqueId()}`; the hash alone addresses the book
         // for a readest://book/{hash} resume deep link from the car.
         bookHash: meta.bookKey.split('-')[0],
         bookTitle: meta.title,
         bookAuthor: meta.author,
       });
-      await mediaSession.updateMetadata({
+      if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
+      this.#latestNativeMetadata = {
         title: meta.title,
         artist: meta.author,
         album: meta.title,
-        artwork: this.#coverArtwork,
+      };
+      await mediaSession.updateMetadata({
+        ...this.#latestNativeMetadata,
+        artwork: '',
       });
     }
 
-    if (this.#mediaSession !== mediaSession) return;
+    if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
 
     this.#registerActionHandlers();
 
@@ -203,9 +204,14 @@ export class TTSMediaBridge {
     };
     controller.addEventListener('tts-speak-mark', this.#onSpeakMark);
     controller.addEventListener('tts-state-change', this.#onStateChange);
+
+    // Artwork is cosmetic and may involve a network/blob fetch plus base64
+    // conversion. Apply it only while this exact binding is still current.
+    void this.#loadArtwork(mediaSession, meta, lifecycleId);
   }
 
   unbind(): void {
+    ++this.#lifecycleId;
     if (this.#controller) {
       if (this.#onSpeakMark) {
         this.#controller.removeEventListener('tts-speak-mark', this.#onSpeakMark);
@@ -235,7 +241,7 @@ export class TTSMediaBridge {
         }
       }
       if (mediaSession instanceof TauriMediaSession) {
-        void mediaSession.setActive({ active: false });
+        void this.#queueNativeLifecycle(mediaSession, { active: false });
       }
     }
     this.#endSkip();
@@ -246,6 +252,39 @@ export class TTSMediaBridge {
     this.#onStateChange = null;
     this.#lastSectionLabel = undefined;
     this.#previousSectionLabel = undefined;
+    this.#latestNativeMetadata = null;
+  }
+
+  #queueNativeLifecycle(mediaSession: TauriMediaSession, state: MediaSessionState): Promise<void> {
+    const operation = this.#nativeLifecycle.then(() => mediaSession.setActive(state));
+    // Keep the queue usable even if a platform implementation rejects.
+    this.#nativeLifecycle = operation.catch(() => {});
+    return operation;
+  }
+
+  async #loadArtwork(
+    mediaSession: BridgeMediaSession,
+    meta: TTSMediaBridgeMeta,
+    lifecycleId: number,
+  ): Promise<void> {
+    let artwork: string;
+    try {
+      artwork = await fetchImageAsBase64(meta.coverImageUrl || '/icon.png');
+    } catch {
+      try {
+        artwork = await fetchImageAsBase64('/icon.png');
+      } catch {
+        artwork = '';
+      }
+    }
+    if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
+    this.#coverArtwork = artwork;
+    if (mediaSession instanceof TauriMediaSession && this.#latestNativeMetadata) {
+      await mediaSession.updateMetadata({
+        ...this.#latestNativeMetadata,
+        artwork,
+      });
+    }
   }
 
   #registerActionHandlers(): void {
@@ -336,12 +375,12 @@ export class TTSMediaBridge {
     if (!metadata.shouldUpdate) return;
 
     if (mediaSession instanceof TauriMediaSession) {
-      await mediaSession.updateMetadata({
+      this.#latestNativeMetadata = {
         title: metadata.title,
         artist: metadata.artist,
         album: metadata.album,
-        artwork: '',
-      });
+      };
+      await mediaSession.updateMetadata({ ...this.#latestNativeMetadata, artwork: '' });
     } else {
       // Declare the artwork's REAL mime type: fetchImageAsBase64 emits a JPEG
       // data URL by default, and WebKit silently drops mediaSession artwork

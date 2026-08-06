@@ -72,7 +72,7 @@ export class TTSSessionManager extends EventTarget {
   #pendingLocation: string | null = null;
   #stopping = false;
 
-  claim(bookKey: string, controller: TTSController, meta: TTSSessionMeta): void {
+  async claim(bookKey: string, controller: TTSController, meta: TTSSessionMeta): Promise<void> {
     const bookHash = getBookHashFromKey(bookKey);
     const existing = this.#session;
     if (existing && existing.bookHash !== bookHash) {
@@ -90,8 +90,8 @@ export class TTSSessionManager extends EventTarget {
     this.#lastRelayedState = null;
     controller.stopAtChapterEnd = this.#stopAtChapterEnd;
     this.#subscribe(controller);
-    void ttsMediaBridge.bind(controller, meta);
     this.#emitSessionChanged('claimed');
+    await ttsMediaBridge.bind(controller, meta);
   }
 
   getSessionByHash(bookHash: string): TTSSession | null {

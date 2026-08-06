@@ -122,16 +122,20 @@ const ttsControllerInstances: unknown[] = [];
 // race ahead and construct a second TTSController. The test releases all
 // pending resolvers once both dispatches have had a chance to interleave.
 const pendingInitResolvers: Array<() => void> = [];
+let rejectNextInit = false;
 
 vi.mock('@/services/tts', () => ({
   TTSController: vi.fn().mockImplementation(function (this: Record<string, unknown>) {
     Object.assign(this, {
-      init: vi.fn().mockImplementation(
-        () =>
-          new Promise<void>((resolve) => {
-            pendingInitResolvers.push(() => resolve());
-          }),
-      ),
+      init: vi.fn().mockImplementation(() => {
+        if (rejectNextInit) {
+          rejectNextInit = false;
+          return Promise.reject(new Error('voice download failed'));
+        }
+        return new Promise<void>((resolve) => {
+          pendingInitResolvers.push(() => resolve());
+        });
+      }),
       initViewTTS: vi.fn().mockResolvedValue(undefined),
       updateHighlightOptions: vi.fn(),
       setHighlightGranularity: vi.fn(),
@@ -312,6 +316,58 @@ describe('useTTSControl concurrent tts-speak events', () => {
       while (pendingInitResolvers.length > 0) pendingInitResolvers.shift()!();
       await Promise.all([p1, p2]);
     });
+  });
+});
+
+describe('useTTSControl startup recovery', () => {
+  beforeEach(() => {
+    ttsControllerInstances.length = 0;
+    pendingInitResolvers.length = 0;
+    rejectNextInit = false;
+    mockSessionManager.claim.mockClear();
+    mockSessionManager.release.mockClear();
+    getSetTTSEnabledMock().mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+  });
+
+  it('fully releases a failed start and lets the next Play action succeed', async () => {
+    rejectNextInit = true;
+    const unbind = vi.spyOn(ttsMediaBridge, 'unbind');
+    const dispatch = vi.spyOn(eventDispatcher, 'dispatch');
+    render(<Harness />);
+
+    await act(async () => {
+      await eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1' });
+    });
+
+    const failedController = ttsControllerInstances[0] as {
+      shutdown: ReturnType<typeof vi.fn>;
+    };
+    expect(failedController.shutdown).toHaveBeenCalled();
+    expect(mockSessionManager.release).toHaveBeenCalledWith('book');
+    expect(unbind).toHaveBeenCalled();
+    expect(getSetTTSEnabledMock()).toHaveBeenCalledWith('book-1', false);
+    expect(dispatch).toHaveBeenCalledWith('toast', {
+      message: 'Read aloud could not start. Please try again.',
+      type: 'error',
+    });
+
+    await act(async () => {
+      const retry = eventDispatcher.dispatch('tts-speak', { bookKey: 'book-1' });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      while (pendingInitResolvers.length > 0) pendingInitResolvers.shift()!();
+      await retry;
+    });
+
+    expect(ttsControllerInstances).toHaveLength(2);
+    const retryController = ttsControllerInstances[1] as {
+      speak: ReturnType<typeof vi.fn>;
+    };
+    expect(retryController.speak).toHaveBeenCalled();
   });
 });
 

@@ -547,6 +547,10 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         try {
             if (active) {
                 cancelIdleTimer()
+                // Record intent before service creation. If a stop wins the
+                // race, onStartCommand observes the newer inactive state and
+                // suppresses this delayed activation.
+                MediaPlaybackService.requestActivation()
                 MediaPlaybackService.pluginEventTrigger = { event, data -> trigger(event, data) }
                 MediaPlaybackService.currentTitle = FOREGROUND_SERVICE_TITLE
                 MediaPlaybackService.currentArtist = FOREGROUND_SERVICE_TEXT
@@ -569,6 +573,10 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             }
             invoke.resolve()
         } catch (e: Exception) {
+            if (active) {
+                MediaPlaybackService.requestDeactivation()
+                MediaPlaybackService.pluginEventTrigger = null
+            }
             invoke.reject("Failed to set media session active state: ${e.message}")
         }
     }
