@@ -11,12 +11,14 @@ const TV_LAUNCHER =
   '                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />\n';
 
 export function configureAndroidTVManifest(source, enabled) {
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
   const manifest = source
+    .replaceAll('\r\n', '\n')
     .replace(`${TV_FEATURES}\n\n`, '')
     .replace(TV_BANNER, '')
     .replace(TV_LAUNCHER, '');
 
-  if (!enabled) return manifest;
+  if (!enabled) return manifest.replaceAll('\n', eol);
 
   const applicationAnchor = '    <application\n';
   const iconAnchor = '        android:icon="@mipmap/ic_launcher"\n';
@@ -32,7 +34,8 @@ export function configureAndroidTVManifest(source, enabled) {
   return manifest
     .replace(applicationAnchor, `${TV_FEATURES}\n\n${applicationAnchor}`)
     .replace(iconAnchor, `${TV_BANNER}${iconAnchor}`)
-    .replace(launcherAnchor, `${launcherAnchor}${TV_LAUNCHER}`);
+    .replace(launcherAnchor, `${launcherAnchor}${TV_LAUNCHER}`)
+    .replaceAll('\n', eol);
 }
 
 async function main() {

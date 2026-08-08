@@ -64,7 +64,7 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
-          targets: aarch64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -130,7 +130,7 @@ jobs:
           version="${{ steps.meta.outputs.version }}"
           mkdir -p dist-release
           cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
-            "dist-release/Readest_CWA_${version}_phone.apk"
+            "dist-release/Readest_CWA_${version}_phone-arm64.apk"
 
       - name: enable Android TV build profile
         run: >-
@@ -142,22 +142,22 @@ jobs:
         working-directory: apps/readest-app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
-        run: pnpm tauri android build -t aarch64
+        run: pnpm tauri android build -t armv7
 
       - name: collect Android TV APK
         shell: bash
         run: |
           version="${{ steps.meta.outputs.version }}"
           cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
-            "dist-release/Readest_CWA_${version}_android-tv.apk"
+            "dist-release/Readest_CWA_${version}_android-tv-armv7.apk"
           ls -lh dist-release
 
       - name: verify distinct APK profiles
         shell: bash
         run: |
           version="${{ steps.meta.outputs.version }}"
-          phone_apk="dist-release/Readest_CWA_${version}_phone.apk"
-          tv_apk="dist-release/Readest_CWA_${version}_android-tv.apk"
+          phone_apk="dist-release/Readest_CWA_${version}_phone-arm64.apk"
+          tv_apk="dist-release/Readest_CWA_${version}_android-tv-armv7.apk"
           apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
 
           if cmp -s "$phone_apk" "$tv_apk"; then
@@ -179,6 +179,19 @@ jobs:
             echo "::error::Android TV APK is missing its launcher banner."
             exit 1
           fi
+
+          unzip -Z1 "$phone_apk" > phone-files.txt
+          unzip -Z1 "$tv_apk" > tv-files.txt
+          grep -qx 'lib/arm64-v8a/libreadestlib.so' phone-files.txt
+          if grep -qx 'lib/armeabi-v7a/libreadestlib.so' phone-files.txt; then
+            echo "::error::Phone APK unexpectedly contains the TV armv7 library."
+            exit 1
+          fi
+          grep -qx 'lib/armeabi-v7a/libreadestlib.so' tv-files.txt
+          if grep -qx 'lib/arm64-v8a/libreadestlib.so' tv-files.txt; then
+            echo "::error::Android TV APK unexpectedly contains the phone arm64 library."
+            exit 1
+          fi
           sha256sum "$phone_apk" "$tv_apk"
 
       - name: create GitHub release and upload APK
@@ -194,7 +207,8 @@ jobs:
           - Package: com.bilingify.readest.cwa
           - CWA Library OPDS integration included
           - Signed arm64 phone APK for private direct install on Android phones and tablets
-          - Separate signed arm64 Android TV APK with a Leanback launcher banner, remote focus navigation, and listen-first Read Aloud controls
+          - Separate signed armv7 Android TV APK for the Google TV Streamer's 32-bit Android userspace
+          - Android TV includes a Leanback launcher banner, remote focus navigation, and listen-first Read Aloud controls
           EOF
 
           gh release create "$TAG_NAME" dist-release/*.apk \
@@ -212,7 +226,7 @@ jobs:
         shell: bash
         run: |
           version="${{ steps.meta.outputs.version }}"
-          arm64_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_phone.apk"
+          arm64_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_phone-arm64.apk"
           jq -n \
             --arg ver "$version" \
             --arg url "$arm64_url" \
