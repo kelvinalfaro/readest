@@ -23,6 +23,6 @@ describe('CWA Android release ABIs', () => {
   });
 
   it('uses a new app version for the corrected TV package', () => {
-    expect(packageJson.version).toBe('0.12.2');
+    expect(packageJson.version).toBe('0.12.3');
   });
 });

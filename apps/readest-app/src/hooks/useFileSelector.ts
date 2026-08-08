@@ -110,9 +110,11 @@ const selectFileTauri = async (
   // (e.g. ".mrexpt" from Moon+ Reader) have no registered MIME and would
   // appear greyed-out, so for those cases we ask the native side for an
   // unfiltered picker and re-apply the extension whitelist on the
-  // resulting paths below. We extend the same treatment to 'generic'
+  // resulting paths below. We extend the same treatment to most 'generic'
   // selections because callers there typically pass arbitrary extensions
-  // that SAF likewise cannot match (e.g. mrexpt, txt).
+  // that SAF likewise cannot match (e.g. mrexpt, txt). ZIP-only selections
+  // keep their filter: Android maps it to application/zip, which prevents
+  // Android 14's photo-picker takeover from swallowing backup restore on TV.
   //
   // Image selections are the exception on iOS: image extensions all map to
   // real UTTypes, so passing them lets the dialog plugin open the Photos
@@ -121,10 +123,16 @@ const selectFileTauri = async (
   // outside png/jpg/jpeg/gif, so picking a HEIC (the iPhone camera default)
   // silently selected nothing at all.
   const isImageSelection = options.type === 'covers' || options.type === 'images';
+  const isZipSelection =
+    options.type === 'generic' &&
+    options.extensions?.length === 1 &&
+    options.extensions[0]?.toLowerCase() === 'zip';
   const noFilter =
     (appService?.isIOSApp && !isImageSelection) ||
     (appService?.isAndroidApp &&
-      (options.type === 'books' || options.type === 'dictionaries' || options.type === 'generic'));
+      (options.type === 'books' ||
+        options.type === 'dictionaries' ||
+        (options.type === 'generic' && !isZipSelection)));
   const exts = noFilter ? [] : options.extensions || [];
   const title = options.dialogTitle || _('Select Files');
   const paths = (await appService?.selectFiles(_(title), exts)) || [];

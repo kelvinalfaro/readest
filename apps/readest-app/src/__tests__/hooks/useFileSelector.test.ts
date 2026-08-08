@@ -87,6 +87,24 @@ describe('useFileSelector cover selection', () => {
   });
 });
 
+describe('useFileSelector Android archive selection', () => {
+  test('keeps the ZIP filter so Android TV can route backup restore to a document picker', async () => {
+    const { appService, selectFiles } = makeAppService('android', [
+      'content://dev.dworks.apps.anexplorer/document/backup',
+    ]);
+    const { selectFiles: select } = useFileSelector(appService, _);
+
+    const result = await select({
+      type: 'generic',
+      extensions: ['zip'],
+      dialogTitle: 'Select Backup',
+    });
+
+    expect(selectFiles).toHaveBeenCalledWith('Select Backup', ['zip']);
+    expect(result.files).toHaveLength(1);
+  });
+});
+
 describe('useFileSelector under gamescope (SteamOS Gaming Mode, #3049)', () => {
   test('Linux in a gamescope session: explains that the file dialog cannot appear', async () => {
     envMock['GAMESCOPE_WAYLAND_DISPLAY'] = 'gamescope-0';
