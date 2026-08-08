@@ -66,6 +66,7 @@ import {
   setLastShownReleaseNotesVersion,
   getLastShownReleaseNotesVersion,
   resolveNightlyUpdate,
+  getAndroidPlatformKey,
   getNightlyPlatformKey,
 } from '@/helpers/updater';
 import {
@@ -79,6 +80,7 @@ beforeEach(() => {
   localStorage.clear();
   mockIsTauriAppPlatform = false;
   mockAppVersion = '1.0.0';
+  mockOsArch.mockReturnValue('aarch64');
   MockWebviewWindowLastArgs.length = 0;
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -200,7 +202,7 @@ describe('updater', () => {
         json: () =>
           Promise.resolve({
             version: '2.0.0',
-            platforms: { 'android-arm64': {} },
+            platforms: { 'android-arm64': { url: 'https://example.com/phone.apk' } },
           }),
       });
 
@@ -212,13 +214,14 @@ describe('updater', () => {
 
     test('Android check with android-universal platform', async () => {
       mockOsType.mockReturnValue('android');
+      mockOsArch.mockReturnValue('x86_64');
       mockAppVersion = '1.0.0';
 
       mockTauriFetch.mockResolvedValue({
         json: () =>
           Promise.resolve({
             version: '2.0.0',
-            platforms: { 'android-universal': {} },
+            platforms: { 'android-universal': { url: 'https://example.com/universal.apk' } },
           }),
       });
 
@@ -226,6 +229,27 @@ describe('updater', () => {
 
       expect(result).toBe(true);
       expect(mockSetUpdaterWindowVisible).toHaveBeenCalled();
+    });
+
+    test('Android armv7 selects the dedicated TV artifact', async () => {
+      mockOsType.mockReturnValue('android');
+      mockOsArch.mockReturnValue('arm');
+      mockAppVersion = '1.0.0';
+      mockTauriFetch.mockResolvedValue({
+        json: () =>
+          Promise.resolve({
+            version: '2.0.0',
+            platforms: {
+              'android-arm64': { url: 'https://example.com/phone.apk' },
+              'android-armv7': { url: 'https://example.com/tv.apk' },
+            },
+          }),
+      });
+
+      const result = await checkForAppUpdates(dummyTranslate, false);
+
+      expect(result).toBe(true);
+      expect(mockSetUpdaterWindowVisible).toHaveBeenCalledWith(true, '2.0.0', '1.0.0');
     });
 
     test('Android returns false when version is not newer', async () => {
@@ -455,6 +479,15 @@ describe('getNightlyPlatformKey', () => {
     expect(getNightlyPlatformKey('windows', 'i686', false, false)).toBeNull();
     expect(getNightlyPlatformKey('windows', 'i686', true, false)).toBeNull();
     expect(getNightlyPlatformKey('linux', 'i686', false, true)).toBeNull();
+  });
+});
+
+describe('getAndroidPlatformKey', () => {
+  test('routes 64-bit phones and the 32-bit Streamer to different artifacts', () => {
+    expect(getAndroidPlatformKey('aarch64')).toBe('android-arm64');
+    expect(getAndroidPlatformKey('arm')).toBe('android-armv7');
+    expect(getAndroidPlatformKey('armv7')).toBe('android-armv7');
+    expect(getAndroidPlatformKey('x86_64')).toBe('android-universal');
   });
 });
 

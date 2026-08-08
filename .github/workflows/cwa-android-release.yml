@@ -227,9 +227,11 @@ jobs:
         run: |
           version="${{ steps.meta.outputs.version }}"
           arm64_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_phone-arm64.apk"
+          tv_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_android-tv-armv7.apk"
           jq -n \
             --arg ver "$version" \
-            --arg url "$arm64_url" \
-            '{version: $ver, platforms: {"android-arm64": {url: $url}}}' > latest.json
+            --arg arm64_url "$arm64_url" \
+            --arg tv_url "$tv_url" \
+            '{version: $ver, platforms: {"android-arm64": {url: $arm64_url}, "android-armv7": {url: $tv_url}}}' > latest.json
           gh release upload "$TAG_NAME" latest.json --clobber
           gh release edit "$TAG_NAME" --latest

@@ -19,7 +19,7 @@ import { tauriDownload } from '@/utils/transfer';
 import { installPackage, verifyUpdateSignature, installNightlyUpdate } from '@/utils/bridge';
 import { join } from '@tauri-apps/api/path';
 import { getLocale } from '@/utils/misc';
-import { setLastShownReleaseNotesVersion } from '@/helpers/updater';
+import { getAndroidPlatformKey, setLastShownReleaseNotesVersion } from '@/helpers/updater';
 import type { ResolvedNightlyUpdate } from '@/helpers/updater';
 import {
   READEST_UPDATER_FILE,
@@ -135,8 +135,13 @@ export const UpdaterContent = ({
       const data = await response.json();
       if (semver.gt(data.version, currentVersion)) {
         const OS_ARCH = osArch();
-        const platformKey = OS_ARCH === 'aarch64' ? 'android-arm64' : 'android-universal';
-        const arch = OS_ARCH === 'aarch64' ? 'arm64' : 'universal';
+        const platformKey = getAndroidPlatformKey(OS_ARCH);
+        const arch =
+          platformKey === 'android-arm64'
+            ? 'arm64'
+            : platformKey === 'android-armv7'
+              ? 'armv7'
+              : 'universal';
         const downloadUrl = data.platforms[platformKey]?.url as string;
         const apkFilePath = await appService.resolveFilePath(
           `Readest_${data.version}_${arch}.apk`,

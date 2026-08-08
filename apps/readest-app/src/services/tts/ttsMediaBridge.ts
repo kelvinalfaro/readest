@@ -97,7 +97,8 @@ export class TTSMediaBridge {
   // Cover fetched once per bind as a data URL. iOS navigator.mediaSession only
   // renders lock-screen / CarPlay artwork from a fetchable URL, and the book
   // cover is often a blob/tauri URL the media session can't load; a data URL
-  // always resolves. Re-sent on every metadata update (each is a full replace).
+  // always resolves. The web path re-sends it on every update (each is a full
+  // replace); the native path pushes it once through #loadArtwork.
   #coverArtwork = '/icon.png';
   #lifecycleId = 0;
   #nativeLifecycle: Promise<void> = Promise.resolve();
@@ -163,10 +164,9 @@ export class TTSMediaBridge {
         artist: meta.author,
         album: meta.title,
       };
-      await mediaSession.updateMetadata({
-        ...this.#latestNativeMetadata,
-        artwork: '',
-      });
+      // Omit artwork until the asynchronous fetch completes. Sending an empty
+      // artwork string wipes the existing cover in the native iOS session.
+      await mediaSession.updateMetadata(this.#latestNativeMetadata);
     }
 
     if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
@@ -279,7 +279,7 @@ export class TTSMediaBridge {
     }
     if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
     this.#coverArtwork = artwork;
-    if (mediaSession instanceof TauriMediaSession && this.#latestNativeMetadata) {
+    if (mediaSession instanceof TauriMediaSession && this.#latestNativeMetadata && artwork) {
       await mediaSession.updateMetadata({
         ...this.#latestNativeMetadata,
         artwork,
@@ -380,7 +380,9 @@ export class TTSMediaBridge {
         artist: metadata.artist,
         album: metadata.album,
       };
-      await mediaSession.updateMetadata({ ...this.#latestNativeMetadata, artwork: '' });
+      // Native implementations merge metadata fields; omit artwork so a
+      // sentence/chapter update preserves the cover loaded for this binding.
+      await mediaSession.updateMetadata(this.#latestNativeMetadata);
     } else {
       // Declare the artwork's REAL mime type: fetchImageAsBase64 emits a JPEG
       // data URL by default, and WebKit silently drops mediaSession artwork

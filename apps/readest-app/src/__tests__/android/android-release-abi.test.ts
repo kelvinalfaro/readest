@@ -19,9 +19,10 @@ describe('CWA Android release ABIs', () => {
     expect(workflow).toContain(`Readest_CWA_\${version}_android-tv-armv7.apk`);
     expect(workflow).toContain('lib/arm64-v8a/libreadestlib.so');
     expect(workflow).toContain('lib/armeabi-v7a/libreadestlib.so');
+    expect(workflow).toContain('"android-armv7": {url: $tv_url}');
   });
 
   it('uses a new app version for the corrected TV package', () => {
-    expect(packageJson.version).toBe('0.11.25');
+    expect(packageJson.version).toBe('0.12.2');
   });
 });

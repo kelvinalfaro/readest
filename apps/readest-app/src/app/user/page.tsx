@@ -20,6 +20,7 @@ import { Toast } from '@/components/Toast';
 import {
   purchaseIAPProduct,
   restoreIAPPurchases,
+  verifyGooglePurchaseProducts,
   getSubscriptionSuccessUrl as getIAPSubscriptionSuccessUrl,
 } from '@/libs/payment/iap/client';
 import { isPurchaseProduct } from '@/libs/payment/iap/utils';
@@ -93,8 +94,13 @@ const ProfilePage = () => {
   useTheme({ systemUIVisible: false });
 
   const { quotas, userProfilePlan = 'free' } = useQuotaStats();
-  const { handleLogout, handleResetPassword, handleUpdateEmail, handleConfirmDelete } =
-    useUserActions();
+  const {
+    handleLogout,
+    handleResetPassword,
+    handleUpdateEmail,
+    handleConfirmDelete,
+    handleDeleteAllBooks,
+  } = useUserActions();
 
   const { availablePlans, iapAvailable } = useAvailablePlans({
     hasIAP: appService?.hasIAP || false,
@@ -195,15 +201,25 @@ const ProfilePage = () => {
     try {
       const purchases = await restoreIAPPurchases();
       if (purchases.length > 0) {
+        // Restored one-time purchases (storage add-ons) may still be
+        // unconsumed on Google Play, blocking repurchase; re-verifying lets
+        // the server consume them.
+        await verifyGooglePurchaseProducts(purchases);
         const restoredSubscriptions = purchases
           .filter((p) => !isPurchaseProduct(p.productId))
           .sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
         const purchase = restoredSubscriptions[0];
 
-        if (!purchase) {
+        if (purchase) {
+          router.push(getIAPSubscriptionSuccessUrl(purchase));
+        } else if (purchases.some((p) => isPurchaseProduct(p.productId))) {
+          eventDispatcher.dispatch('toast', {
+            type: 'info',
+            message: _('Purchases restored successfully.'),
+          });
+        } else {
           throw new Error('No subscription found in restored purchases');
         }
-        router.push(getIAPSubscriptionSuccessUrl(purchase));
       } else {
         eventDispatcher.dispatch('toast', {
           type: 'info',
@@ -238,6 +254,13 @@ const ProfilePage = () => {
 
   const handleDeleteWithMessage = () => {
     handleConfirmDelete(_('Failed to delete user. Please try again later.'));
+  };
+
+  const handleDeleteAllBooksWithMessage = () => {
+    handleDeleteAllBooks(
+      _('All books deleted.'),
+      _('Failed to delete books. Please try again later.'),
+    );
   };
 
   const handleManageStorage = () => {
@@ -355,6 +378,7 @@ const ProfilePage = () => {
                         onResetPassword={handleResetPassword}
                         onUpdateEmail={handleUpdateEmail}
                         onConfirmDelete={handleDeleteWithMessage}
+                        onConfirmDeleteAllBooks={handleDeleteAllBooksWithMessage}
                         onRestorePurchase={
                           SHOW_PREMIUM_SURFACES ? handleIAPRestorePurchase : undefined
                         }
