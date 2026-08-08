@@ -40,6 +40,7 @@ import { getDirPath, getFilename } from '@/utils/path';
 import { NativeFile, RemoteFile } from '@/utils/file';
 import {
   copyURIToPath,
+  getAndroidDeviceType,
   getStorefrontRegionCode,
   hasAmbientLightSensor,
   saveImageToGallery,
@@ -670,6 +671,13 @@ export class NativeAppService extends BaseAppService {
       }
     }
     if (this.isAndroidApp) {
+      try {
+        const deviceType = await getAndroidDeviceType();
+        this.isTV = deviceType.isTV;
+      } catch (err) {
+        console.warn('[nativeAppService] getAndroidDeviceType failed:', err);
+        this.isTV = false;
+      }
       try {
         const res = await hasAmbientLightSensor();
         this.hasAmbientLightSensor = !!res.available;

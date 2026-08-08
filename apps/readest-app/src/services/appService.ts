@@ -49,6 +49,7 @@ export abstract class BaseAppService implements AppService {
   isLinuxApp = false;
   isAppDataSandbox = false;
   isAndroidApp = false;
+  isTV = false;
   isIOSApp = false;
   isWindowsApp = false;
   isMobileApp = false;

@@ -37,8 +37,9 @@ vi.mock('@/components/Dialog', () => ({
 }));
 
 const envConfig = {};
+const mockAppService = { hasHaptics: false, isTV: false };
 vi.mock('@/context/EnvContext', () => ({
-  useEnv: () => ({ envConfig, appService: { hasHaptics: false } }),
+  useEnv: () => ({ envConfig, appService: mockAppService }),
 }));
 
 const viewSettings: Record<string, unknown> = {};
@@ -146,6 +147,7 @@ const makeProps = (overrides: Record<string, unknown> = {}) => ({
 
 describe('TTSPlayerSheet', () => {
   beforeEach(() => {
+    mockAppService.isTV = false;
     viewSettings['ttsRate'] = 1.0;
     viewSettings['ttsSentenceGap'] = 0.15;
     viewSettings['isEink'] = false;
@@ -179,6 +181,19 @@ describe('TTSPlayerSheet', () => {
     expect(await waitFor(() => screen.getByText('Ava'))).toBeTruthy(); // voice button caption
     // The main view carries no header label (vertical space).
     expect(screen.queryByText('Read Aloud')).toBeNull();
+  });
+
+  test('adds author and Stop to the listen-first TV player', () => {
+    mockAppService.isTV = true;
+    getBookData.mockReturnValue({
+      book: { title: 'Alice in Wonderland', author: 'Lewis Carroll', coverImageUrl: null },
+    });
+    const onStop = vi.fn();
+
+    render(<TTSPlayerSheet {...makeProps({ onStop })} />);
+    expect(screen.getByText('Lewis Carroll')).toBeTruthy();
+    fireEvent.click(screen.getByLabelText('Stop'));
+    expect(onStop).toHaveBeenCalledOnce();
   });
 
   test('degrades without a timeline: no scrubber, estimate text instead', () => {

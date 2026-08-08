@@ -1031,6 +1031,27 @@ textarea:focus-within,
   visibility: hidden !important;
 }
 
+/* Android TV: keep the shared phone/tablet layout, but make remote focus
+   unmistakable and preserve a conservative overscan-safe content area. */
+html[data-tv='true'] body {
+  border-radius: 0;
+  font-size: 18px;
+}
+
+html[data-tv='true'] :is(button, a, input, select, textarea, [role='button']):focus-visible {
+  outline: 4px solid #78a9ff !important;
+  outline-offset: 4px !important;
+  box-shadow: 0 0 0 8px rgb(0 0 0 / 55%) !important;
+}
+
+html[data-tv='true'] :is(.library-header, .bookshelf, .opds-navigation) {
+  padding-inline: max(4vw, 32px);
+}
+
+html[data-tv='true'] .modal-box {
+  max-height: 82vh !important;
+}
+
 /* TTS player scrubber: the track is painted by an inline three-stop gradient
    (played / buffered / rest), so the native appearance must be blanked and
    the element itself becomes the 4px track. Thumb inherits currentColor. */

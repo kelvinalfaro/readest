@@ -11,6 +11,11 @@ on:
         description: 'Release title. Leave blank to use Readest CWA Android v<version>.'
         required: false
         type: string
+      publish_updater_metadata:
+        description: 'Publish shared latest.json after phone smoke testing.'
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: write
 
@@ -113,20 +118,62 @@ jobs:
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "name=${name}" >> "$GITHUB_OUTPUT"
 
-      - name: build Android release apk
+      - name: build phone release APK
         working-directory: apps/readest-app
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
         run: pnpm tauri android build -t aarch64
 
-      - name: collect APK asset
+      - name: collect phone APK
         shell: bash
         run: |
           version="${{ steps.meta.outputs.version }}"
           mkdir -p dist-release
           cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
-            "dist-release/Readest_CWA_${version}_arm64.apk"
+            "dist-release/Readest_CWA_${version}_phone.apk"
+
+      - name: enable Android TV build profile
+        run: >-
+          node apps/readest-app/scripts/configure-android-tv-manifest.mjs
+          --enable
+          apps/readest-app/src-tauri/gen/android/app/src/main/AndroidManifest.xml
+
+      - name: build Android TV release APK
+        working-directory: apps/readest-app
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: pnpm tauri android build -t aarch64
+
+      - name: collect Android TV APK
+        shell: bash
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          cp apps/readest-app/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+            "dist-release/Readest_CWA_${version}_android-tv.apk"
           ls -lh dist-release
+
+      - name: verify distinct APK profiles
+        shell: bash
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          phone_apk="dist-release/Readest_CWA_${version}_phone.apk"
+          tv_apk="dist-release/Readest_CWA_${version}_android-tv.apk"
+          apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+
+          if cmp -s "$phone_apk" "$tv_apk"; then
+            echo "::error::Phone and Android TV APKs are identical."
+            exit 1
+          fi
+
+          "$apkanalyzer" manifest print "$phone_apk" > phone-manifest.xml
+          "$apkanalyzer" manifest print "$tv_apk" > tv-manifest.xml
+          if grep -q 'android.intent.category.LEANBACK_LAUNCHER' phone-manifest.xml; then
+            echo "::error::Phone APK unexpectedly contains the Leanback launcher."
+            exit 1
+          fi
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' tv-manifest.xml
+          grep -q 'android:banner="@drawable/tv_banner"' tv-manifest.xml
+          sha256sum "$phone_apk" "$tv_apk"
 
       - name: create GitHub release and upload APK
         env:
@@ -140,7 +187,8 @@ jobs:
 
           - Package: com.bilingify.readest.cwa
           - CWA Library OPDS integration included
-          - APK is a signed arm64 release build for direct install
+          - Signed arm64 phone APK for private direct install on Android phones and tablets
+          - Separate signed arm64 Android TV APK with a Leanback launcher banner, remote focus navigation, and listen-first Read Aloud controls
           EOF
 
           gh release create "$TAG_NAME" dist-release/*.apk \
@@ -148,8 +196,16 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
             --notes-file release-notes.md
+
+      - name: publish shared updater metadata
+        if: inputs.publish_updater_metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
           version="${{ steps.meta.outputs.version }}"
-          arm64_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_arm64.apk"
+          arm64_url="https://github.com/kelvinalfaro/readest/releases/download/${TAG_NAME}/Readest_CWA_${version}_phone.apk"
           jq -n \
             --arg ver "$version" \
             --arg url "$arm64_url" \

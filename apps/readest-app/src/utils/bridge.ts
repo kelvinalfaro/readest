@@ -87,6 +87,11 @@ export interface GetSafeAreaInsetsResponse {
   error?: string;
 }
 
+export interface GetAndroidDeviceTypeResponse {
+  isTV: boolean;
+  error?: string;
+}
+
 interface GetScreenBrightnessResponse {
   brightness: number; // 0.0 to 1.0
   error?: string;
@@ -229,6 +234,10 @@ export async function getSafeAreaInsets(): Promise<GetSafeAreaInsetsResponse> {
     'plugin:native-bridge|get_safe_area_insets',
   );
   return result;
+}
+
+export async function getAndroidDeviceType(): Promise<GetAndroidDeviceTypeResponse> {
+  return invoke<GetAndroidDeviceTypeResponse>('plugin:native-bridge|get_android_device_type');
 }
 
 export async function getScreenBrightness(): Promise<GetScreenBrightnessResponse> {

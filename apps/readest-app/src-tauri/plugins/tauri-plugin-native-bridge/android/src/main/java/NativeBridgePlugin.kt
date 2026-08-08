@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.content.ComponentName
 import android.content.ContentValues
 import android.content.Context
+import android.content.res.Configuration
 import android.content.Intent
 import android.net.Uri
 import android.provider.MediaStore
@@ -922,6 +923,20 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     }
 
     @Command
+    fun get_android_device_type(invoke: Invoke) {
+        val ret = JSObject()
+        try {
+            val uiModeType = activity.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
+            val hasLeanback = activity.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+            ret.put("isTV", isTelevisionDevice(uiModeType, hasLeanback))
+        } catch (e: Exception) {
+            ret.put("isTV", false)
+            ret.put("error", e.message)
+        }
+        invoke.resolve(ret)
+    }
+
+    @Command
     fun has_ambient_light_sensor(invoke: Invoke) {
         val ret = JSObject()
         try {
@@ -1815,6 +1830,9 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         }
     }
 }
+
+internal fun isTelevisionDevice(uiModeType: Int, hasLeanback: Boolean): Boolean =
+    uiModeType == Configuration.UI_MODE_TYPE_TELEVISION || hasLeanback
 
 @app.tauri.annotation.InvokeArg
 class SyncPassphraseSetArgs {

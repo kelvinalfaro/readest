@@ -99,6 +99,8 @@ export interface AppService {
   isAppDataSandbox: boolean;
   isMobileApp: boolean;
   isAndroidApp: boolean;
+  /** True when Android reports television UI mode or Leanback hardware support. */
+  isTV: boolean;
   isIOSApp: boolean;
   isMacOSApp: boolean;
   isLinuxApp: boolean;

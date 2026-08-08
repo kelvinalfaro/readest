@@ -9,6 +9,7 @@ import {
   MdKeyboardDoubleArrowLeft,
   MdKeyboardDoubleArrowRight,
   MdOutlinePause,
+  MdStop,
   MdPlayArrow,
   MdOutlineFileDownload,
   MdChevronRight,
@@ -76,6 +77,7 @@ type TTSPlayerSheetProps = {
   chapterRemainingSec: number | null;
   onClose: () => void;
   onTogglePlay: () => void;
+  onStop?: () => void;
   onBackward: (byMark: boolean) => void;
   onForward: (byMark: boolean) => void;
   onSetRate: (rate: number) => void;
@@ -106,6 +108,7 @@ const TTSPlayerSheet = ({
   chapterRemainingSec,
   onClose,
   onTogglePlay,
+  onStop,
   onBackward,
   onForward,
   onSetRate,
@@ -123,7 +126,7 @@ const TTSPlayerSheet = ({
 }: TTSPlayerSheetProps) => {
   const _ = useTranslation();
   const router = useRouter();
-  const { envConfig } = useEnv();
+  const { envConfig, appService } = useEnv();
   const { user } = useAuth();
   const { getViewSettings, setViewSettings } = useReaderStore();
   const { getBookData } = useBookDataStore();
@@ -323,7 +326,10 @@ const TTSPlayerSheet = ({
       snapHeight={0.65}
       title={_('Read Aloud')}
       header={header}
-      boxClassName='sm:!h-auto sm:!max-h-[85%] sm:!w-[420px] sm:!min-w-0'
+      boxClassName={clsx(
+        'sm:!h-auto sm:!max-h-[85%] sm:!w-[420px] sm:!min-w-0',
+        appService?.isTV && 'sm:!h-[78vh] sm:!w-[68vw] sm:!max-w-[960px]',
+      )}
       contentClassName='!px-4 sm:!px-4 mt-[-4px]'
       onClose={onClose}
     >
@@ -342,6 +348,9 @@ const TTSPlayerSheet = ({
           ) : null}
           <div className='flex w-full flex-col items-center gap-0.5 text-center'>
             <span className='line-clamp-1 font-semibold'>{book?.title ?? ''}</span>
+            {appService?.isTV && book?.author ? (
+              <span className='text-base-content/70 line-clamp-1 text-sm'>{book.author}</span>
+            ) : null}
             {sectionLabel && (
               <span className='text-base-content/70 line-clamp-1 text-sm'>{sectionLabel}</span>
             )}
@@ -388,6 +397,16 @@ const TTSPlayerSheet = ({
             >
               {isPlaying ? <MdOutlinePause size={iconSize32} /> : <MdPlayArrow size={iconSize32} />}
             </button>
+            {appService?.isTV && onStop ? (
+              <button
+                type='button'
+                className='btn btn-ghost btn-circle mx-1 h-12 min-h-12 w-12'
+                aria-label={_('Stop')}
+                onClick={onStop}
+              >
+                <MdStop size={iconSize28} />
+              </button>
+            ) : null}
             <button
               type='button'
               className='rounded-full p-2'
