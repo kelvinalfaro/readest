@@ -12,6 +12,7 @@ import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { impactFeedback } from '@tauri-apps/plugin-haptics';
 import { getDirFromUILanguage } from '@/utils/rtl';
 import { eventDispatcher } from '@/utils/event';
+import { getTVFocusables } from '@/utils/tvNavigation';
 import { Overlay } from './Overlay';
 
 const VELOCITY_THRESHOLD = 0.5;
@@ -103,13 +104,41 @@ const Dialog: React.FC<DialogProps> = ({
       eventDispatcher.onSync('native-key-down', handleKeyDown);
     }
 
-    const timer = setTimeout(() => {
-      if (dialogRef.current) {
-        dialogRef.current.focus();
+    const focusDialog = () => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (appService?.isTV) {
+        // A TV remote cannot recover from focus landing on the non-interactive
+        // dialog container. Enter on the first actionable control instead.
+        const firstControl = getTVFocusables(dialog)[0];
+        if (firstControl) {
+          firstControl.focus();
+          firstControl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          return;
+        }
       }
-    }, 100);
+      dialog.focus();
+    };
+
+    const timer = setTimeout(focusDialog, 100);
+    const focusObserver = appService?.isTV
+      ? new MutationObserver(() => {
+          const dialog = dialogRef.current;
+          const activeElement = document.activeElement;
+          if (!dialog || (activeElement instanceof HTMLElement && dialog.contains(activeElement))) {
+            return;
+          }
+          // Backup/restore swaps all of its action buttons while processing.
+          // Restore focus as soon as the next actionable state is rendered.
+          window.setTimeout(focusDialog, 0);
+        })
+      : null;
+    if (focusObserver && dialogRef.current) {
+      focusObserver.observe(dialogRef.current, { childList: true, subtree: true });
+    }
     return () => {
       clearTimeout(timer);
+      focusObserver?.disconnect();
       window.removeEventListener('keydown', handleKeyDown);
       if (appService?.isAndroidApp) {
         releaseBackKeyInterception();

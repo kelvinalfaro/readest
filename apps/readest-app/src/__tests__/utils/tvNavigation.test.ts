@@ -69,4 +69,19 @@ describe('TV spatial navigation', () => {
 
     expect(getTVFocusables(document)).toEqual([inside]);
   });
+
+  it('honors an explicitly scoped dialog when another dialog is open', () => {
+    document.body.innerHTML = `
+      <dialog id="first" open><button id="first-button">First</button></dialog>
+      <dialog id="second" open><button id="second-button">Second</button></dialog>
+    `;
+    const firstDialog = document.querySelector<HTMLDialogElement>('#first')!;
+    const firstButton = document.querySelector<HTMLElement>('#first-button')!;
+    const secondButton = document.querySelector<HTMLElement>('#second-button')!;
+    setRect(firstButton, 0, 0);
+    setRect(secondButton, 100, 0);
+
+    expect(getTVFocusables(firstDialog)).toEqual([firstButton]);
+    expect(getTVFocusables(document)).toEqual([secondButton]);
+  });
 });

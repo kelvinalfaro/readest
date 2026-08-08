@@ -24,7 +24,7 @@ const isVisible = (element: HTMLElement) => {
 
 export function getTVFocusables(root: ParentNode = document): HTMLElement[] {
   const dialogs = Array.from(document.querySelectorAll<HTMLDialogElement>('dialog[open]'));
-  const scope: ParentNode = dialogs.at(-1) ?? root;
+  const scope: ParentNode = root === document ? (dialogs.at(-1) ?? root) : root;
   return Array.from(scope.querySelectorAll<HTMLElement>(TV_FOCUSABLE_SELECTOR)).filter(isVisible);
 }
 

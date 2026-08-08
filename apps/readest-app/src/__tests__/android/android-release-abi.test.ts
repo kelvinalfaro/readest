@@ -34,7 +34,7 @@ describe('CWA Android release ABIs', () => {
   });
 
   it('uses a new app version for the corrected TV package', () => {
-    expect(packageJson.version).toBe('0.12.4');
+    expect(packageJson.version).toBe('0.12.5');
   });
 
   it('routes Android backup ZIP selection through the document framework', () => {
