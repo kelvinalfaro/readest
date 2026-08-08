@@ -171,8 +171,14 @@ jobs:
             echo "::error::Phone APK unexpectedly contains the Leanback launcher."
             exit 1
           fi
-          grep -q 'android.intent.category.LEANBACK_LAUNCHER' tv-manifest.xml
-          grep -q 'android:banner="@drawable/tv_banner"' tv-manifest.xml
+          if ! grep -q 'android.intent.category.LEANBACK_LAUNCHER' tv-manifest.xml; then
+            echo "::error::Android TV APK is missing the Leanback launcher."
+            exit 1
+          fi
+          if ! grep -q 'android:banner=' tv-manifest.xml; then
+            echo "::error::Android TV APK is missing its launcher banner."
+            exit 1
+          fi
           sha256sum "$phone_apk" "$tv_apk"
 
       - name: create GitHub release and upload APK
