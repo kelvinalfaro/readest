@@ -247,9 +247,11 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         private const val REQUEST_MANAGE_STORAGE = 1001
         private const val FOLDER_PICKER_REQUEST_CODE = 1002
         private const val FILE_PICKER_REQUEST_CODE = 1003
+        private const val BACKUP_PICKER_REQUEST_CODE = 1004
         var pendingInvoke: Invoke? = null
         private var pendingAuthCallbackTarget: OAuthCallbackTarget? = null
         var pendingFolderPickerInvoke: Invoke? = null
+        var pendingBackupPickerInvoke: Invoke? = null
         // A file-picker result can be delivered to a MainActivity that was
         // recreated after the process died behind the system picker (#1217).
         // onActivityResult then fires before Tauri has instantiated this
@@ -1215,6 +1217,46 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         }
     }
 
+    // Backup restore picker. Android 14 routes ACTION_GET_CONTENT through the
+    // system photo-picker compatibility activity, which fails on Android TV
+    // builds without DocumentsUI. ACTION_OPEN_DOCUMENT lets an installed SAF
+    // provider (for example AnExplorer) handle the ZIP selection instead.
+    @Command
+    fun select_backup_file(invoke: Invoke) {
+        pendingBackupPickerInvoke = invoke
+        try {
+            val hasLeanback = activity.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+            if (hasLeanback && Environment.isExternalStorageManager()) {
+                val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val backup = downloads.listFiles()
+                    ?.filter { file ->
+                        file.isFile &&
+                            file.name.startsWith("readest-backup-") &&
+                            file.name.endsWith(".zip", ignoreCase = true)
+                    }
+                    ?.maxByOrNull { it.lastModified() }
+                if (backup != null) {
+                    pendingBackupPickerInvoke = null
+                    val result = JSObject()
+                    result.put("cancelled", false)
+                    result.put("uri", backup.absolutePath)
+                    invoke.resolve(result)
+                    return
+                }
+            }
+
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/zip"
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+            }
+            activity.startActivityForResult(intent, BACKUP_PICKER_REQUEST_CODE)
+        } catch (e: Exception) {
+            pendingBackupPickerInvoke = null
+            invoke.reject("Failed to open backup picker: ${e.message}")
+        }
+    }
+
     private fun emitFilePickerResult(data: Intent) {
         val uris = mutableListOf<Uri>()
         data.clipData?.let { clip ->
@@ -1265,6 +1307,22 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         } else if (requestCode == FILE_PICKER_REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 emitFilePickerResult(data)
+            }
+        } else if (requestCode == BACKUP_PICKER_REQUEST_CODE) {
+            val invoke = pendingBackupPickerInvoke
+            pendingBackupPickerInvoke = null
+            if (invoke != null) {
+                val result = JSObject()
+                val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+                if (uri != null) {
+                    tryTakePersistableReadPermission(uri)
+                    result.put("cancelled", false)
+                    result.put("uri", uri.toString())
+                } else {
+                    result.put("cancelled", true)
+                    result.put("uri", null)
+                }
+                invoke.resolve(result)
             }
         }
     }

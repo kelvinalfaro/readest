@@ -118,6 +118,11 @@ interface SelectDirectoryResponse {
   error?: string;
 }
 
+interface SelectBackupFileResponse {
+  cancelled?: boolean;
+  uri?: string;
+}
+
 export interface GetStorefrontRegionCodeResponse {
   regionCode?: string;
   error?: string;
@@ -295,6 +300,10 @@ export async function getExternalSDCardPath(): Promise<GetExternalSDCardPathResp
 export async function selectDirectory(): Promise<SelectDirectoryResponse> {
   const result = await invoke<SelectDirectoryResponse>('plugin:native-bridge|select_directory');
   return result;
+}
+
+export async function selectBackupFile(): Promise<SelectBackupFileResponse> {
+  return invoke<SelectBackupFileResponse>('plugin:native-bridge|select_backup_file');
 }
 
 // Android only. Opens the system document picker fire-and-forget; the picked

@@ -7,6 +7,17 @@ const workflow = readFileSync(
   'utf8',
 );
 const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8'));
+const nativeBridge = readFileSync(
+  resolve(
+    process.cwd(),
+    'src-tauri/plugins/tauri-plugin-native-bridge/android/src/main/java/NativeBridgePlugin.kt',
+  ),
+  'utf8',
+);
+const nativeAppService = readFileSync(
+  resolve(process.cwd(), 'src/services/nativeAppService.ts'),
+  'utf8',
+);
 
 describe('CWA Android release ABIs', () => {
   it('builds the phone APK for arm64 and the TV APK for the Streamer armv7 ABI', () => {
@@ -23,6 +34,17 @@ describe('CWA Android release ABIs', () => {
   });
 
   it('uses a new app version for the corrected TV package', () => {
-    expect(packageJson.version).toBe('0.12.3');
+    expect(packageJson.version).toBe('0.12.4');
+  });
+
+  it('routes Android backup ZIP selection through the document framework', () => {
+    expect(nativeBridge).toContain('Intent(Intent.ACTION_OPEN_DOCUMENT)');
+    expect(nativeBridge).toContain('type = "application/zip"');
+    expect(nativeBridge).toContain('fun select_backup_file(invoke: Invoke)');
+    expect(nativeBridge).toContain('Environment.DIRECTORY_DOWNLOADS');
+    expect(nativeBridge).toContain('file.name.startsWith("readest-backup-")');
+    expect(nativeBridge).toContain('file.name.endsWith(".zip", ignoreCase = true)');
+    expect(nativeAppService).toContain("extensions[0]?.toLowerCase() === 'zip'");
+    expect(nativeAppService).toContain('await selectBackupFile()');
   });
 });

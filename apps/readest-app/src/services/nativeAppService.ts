@@ -43,6 +43,7 @@ import {
   getAndroidDeviceType,
   getStorefrontRegionCode,
   hasAmbientLightSensor,
+  selectBackupFile,
   saveImageToGallery,
 } from '@/utils/bridge';
 import { galleryFileName } from '@/utils/image';
@@ -767,6 +768,14 @@ export class NativeAppService extends BaseAppService {
   }
 
   async selectFiles(name: string, extensions: string[]): Promise<string[]> {
+    if (
+      OS_TYPE === 'android' &&
+      extensions.length === 1 &&
+      extensions[0]?.toLowerCase() === 'zip'
+    ) {
+      const result = await selectBackupFile();
+      return result.uri ? [result.uri] : [];
+    }
     const selected = await openDialog({
       multiple: true,
       filters: [{ name, extensions }],
