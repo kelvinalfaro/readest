@@ -201,7 +201,8 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "$RELEASE_NAME" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            --latest=false
 
       - name: publish shared updater metadata
         if: inputs.publish_updater_metadata
@@ -217,3 +218,4 @@ jobs:
             --arg url "$arm64_url" \
             '{version: $ver, platforms: {"android-arm64": {url: $url}}}' > latest.json
           gh release upload "$TAG_NAME" latest.json --clobber
+          gh release edit "$TAG_NAME" --latest
