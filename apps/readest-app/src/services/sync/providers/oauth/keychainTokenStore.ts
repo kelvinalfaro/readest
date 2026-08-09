@@ -10,7 +10,7 @@ import { isTauriAppPlatform } from '@/services/environment';
 import {
   clearSecureItem,
   getSecureItem,
-  isSyncKeychainAvailable,
+  isSecureItemStoreAvailable,
   setSecureItem,
 } from '@/utils/bridge';
 import { FileSyncError } from '@/services/sync/file/provider';
@@ -64,7 +64,7 @@ export const createKeychainTokenPersistence = async (
 ): Promise<TokenPersistence | null> => {
   if (!isTauriAppPlatform()) return null;
   try {
-    const res = await isSyncKeychainAvailable();
+    const res = await isSecureItemStoreAvailable();
     if (res.available) return new KeychainTokenPersistence(key, label);
   } catch (err) {
     console.warn(`[${label}] keychain probe threw`, err);

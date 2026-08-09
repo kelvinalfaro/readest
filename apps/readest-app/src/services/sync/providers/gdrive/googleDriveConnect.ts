@@ -7,7 +7,7 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { type as osType } from '@tauri-apps/plugin-os';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
-import { getGoogleClientId, getGoogleWebClientId } from './buildGoogleDriveProvider';
+import { getGoogleWebClientId, resolveGoogleNativeCredentials } from './buildGoogleDriveProvider';
 import { createDriveTokenPersistence } from './driveTokenStore';
 import { runDesktopDeepLinkOAuth } from '@/services/sync/providers/oauth/oauthDesktop';
 import { runAndroidOAuth } from '@/services/sync/providers/oauth/oauthAndroid';
@@ -24,6 +24,7 @@ import {
   type ConnectGoogleDriveResult,
 } from './connectGoogleDrive';
 import type { FetchFn } from './GoogleDriveProvider';
+import { runGoogleTvDeviceFlow, type GoogleTvDevicePrompt } from './googleTvDeviceFlow';
 
 const resolveFetch = (): FetchFn =>
   (isTauriAppPlatform() ? tauriFetch : globalThis.fetch) as unknown as FetchFn;
@@ -48,7 +49,14 @@ const resolveOAuthRunner = (): ((
 };
 
 /** Run the platform Drive sign-in and return the connected account label. */
-export const runGoogleDriveConnect = async (): Promise<ConnectGoogleDriveResult> => {
+export interface GoogleDriveConnectOptions {
+  isTV?: boolean;
+  onDevicePrompt?: (prompt: GoogleTvDevicePrompt) => void;
+}
+
+export const runGoogleDriveConnect = async (
+  options: GoogleDriveConnectOptions = {},
+): Promise<ConnectGoogleDriveResult> => {
   // The memoised provider holds the previous connection's auth (and its
   // path->id cache, which is account-scoped under drive.file); a (re)connect
   // must not keep serving it.
@@ -70,17 +78,36 @@ export const runGoogleDriveConnect = async (): Promise<ConnectGoogleDriveResult>
     return new Promise<ConnectGoogleDriveResult>(() => {});
   }
 
-  const clientId = getGoogleClientId();
-  if (!clientId) {
-    throw new Error('Google Drive is not configured in this build');
-  }
+  const credentials = await resolveGoogleNativeCredentials(options.isTV);
+  if (!credentials) throw new Error('Google Drive is not configured for this device');
   const persistence = await createDriveTokenPersistence();
   if (!persistence) {
     throw new Error('Google Drive requires a Readest app build with secure storage');
   }
+  const fetchFn = resolveFetch();
+  if (credentials.isTV) {
+    if (!credentials.clientSecret || !options.onDevicePrompt) {
+      throw new Error('Google Drive TV sign-in is not configured in this build');
+    }
+    const clientSecret = credentials.clientSecret;
+    return connectGoogleDrive({
+      clientId: credentials.clientId,
+      clientSecret,
+      fetchFn,
+      persistence,
+      runOAuth: (config) =>
+        runGoogleTvDeviceFlow({
+          clientId: credentials.clientId,
+          clientSecret,
+          scope: config.scope,
+          fetchFn,
+          onPrompt: options.onDevicePrompt!,
+        }),
+    });
+  }
   return connectGoogleDrive({
-    clientId,
-    fetchFn: resolveFetch(),
+    clientId: credentials.clientId,
+    fetchFn,
     persistence,
     runOAuth: resolveOAuthRunner(),
   });

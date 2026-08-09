@@ -405,8 +405,8 @@ export async function isSyncKeychainAvailable(): Promise<SyncKeychainAvailableRe
 // as the sync passphrase above, so secrets that aren't the single sync
 // passphrase (the Google Drive OAuth token set, and any future cloud
 // provider's refresh token) get the same XSS-free cross-launch persistence
-// without each needing its own native command. Availability is the same probe
-// as `is_sync_keychain_available`.
+// without each needing its own native command. This store has its own probe so
+// an unreadable sync-passphrase file cannot block unrelated OAuth sign-in.
 
 export interface SetSecureItemRequest {
   key: string;
@@ -425,6 +425,12 @@ export interface SecureItemResponse {
 export interface GetSecureItemResponse {
   value?: string;
   error?: string;
+}
+
+export async function isSecureItemStoreAvailable(): Promise<SyncKeychainAvailableResponse> {
+  return invoke<SyncKeychainAvailableResponse>(
+    'plugin:native-bridge|is_secure_item_store_available',
+  );
 }
 
 export async function setSecureItem(request: SetSecureItemRequest): Promise<SecureItemResponse> {

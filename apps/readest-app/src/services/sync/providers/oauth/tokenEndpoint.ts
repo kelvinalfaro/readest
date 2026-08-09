@@ -5,9 +5,10 @@
  * supplied by the caller (see `tokenEndpoint` on {@link ExchangeCodeParams} /
  * {@link RefreshTokenParams}).
  *
- * Readest's official Google client is the iOS application type, which has NO
- * client secret — neither request sends one. The authorization code is instead
- * bound to this client by replaying the PKCE `code_verifier` (see `pkce.ts`).
+ * Readest's phone Google client is the iOS application type, which has no
+ * client secret; its authorization code is bound by PKCE. Google's separate
+ * limited-input TV client requires its client secret during token polling and
+ * refresh, so refresh accepts an optional secret for that one platform.
  *
  * The request/parse logic is pure given an injected `fetch`, which keeps it
  * testable without a network and platform-agnostic.
@@ -33,6 +34,7 @@ const TOKEN_PARAM = {
   code: 'code',
   codeVerifier: 'code_verifier',
   clientId: 'client_id',
+  clientSecret: 'client_secret',
   redirectUri: 'redirect_uri',
   refreshToken: 'refresh_token',
 } as const;
@@ -84,6 +86,8 @@ export interface RefreshTokenParams {
   refreshToken: string;
   /** OAuth client ID registered for this app with the provider. */
   clientId: string;
+  /** Optional client secret required by limited-input device clients. */
+  clientSecret?: string;
   /** Provider-specific token endpoint (Google / Microsoft). */
   tokenEndpoint: string;
 }
@@ -177,12 +181,13 @@ export const exchangeCode = (
  * caller should keep the existing one when the response doesn't include one.
  */
 export const refreshAccessToken = (
-  { refreshToken, clientId, tokenEndpoint }: RefreshTokenParams,
+  { refreshToken, clientId, clientSecret, tokenEndpoint }: RefreshTokenParams,
   fetchFn: FetchFn,
 ): Promise<TokenSet> => {
   const params = new URLSearchParams();
   params.set(TOKEN_PARAM.grantType, GRANT_TYPE.refreshToken);
   params.set(TOKEN_PARAM.refreshToken, refreshToken);
   params.set(TOKEN_PARAM.clientId, clientId);
+  if (clientSecret) params.set(TOKEN_PARAM.clientSecret, clientSecret);
   return requestTokens(tokenEndpoint, params, 'refresh', fetchFn);
 };

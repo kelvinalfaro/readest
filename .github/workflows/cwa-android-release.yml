@@ -71,13 +71,22 @@ jobs:
           key: cwa-android-release-cargo
 
       - name: create .env.local file for Next.js
+        env:
+          CWA_GOOGLE_TV_CLIENT_ID: ${{ secrets.CWA_GOOGLE_TV_CLIENT_ID }}
+          CWA_GOOGLE_TV_CLIENT_SECRET: ${{ secrets.CWA_GOOGLE_TV_CLIENT_SECRET }}
         run: |
+          if [ -z "$CWA_GOOGLE_TV_CLIENT_ID" ] || [ -z "$CWA_GOOGLE_TV_CLIENT_SECRET" ]; then
+            echo "::error::CWA Google TV OAuth credentials are required."
+            exit 1
+          fi
           {
             echo "NEXT_PUBLIC_POSTHOG_KEY="
             echo "NEXT_PUBLIC_POSTHOG_HOST="
             echo "NEXT_PUBLIC_SUPABASE_URL="
             echo "NEXT_PUBLIC_SUPABASE_ANON_KEY="
             echo "NEXT_PUBLIC_APP_PLATFORM=tauri"
+            echo "NEXT_PUBLIC_GOOGLE_TV_CLIENT_ID=$CWA_GOOGLE_TV_CLIENT_ID"
+            echo "NEXT_PUBLIC_GOOGLE_TV_CLIENT_SECRET=$CWA_GOOGLE_TV_CLIENT_SECRET"
             echo "SENTRY_DSN="
           } > .env.local
           cp .env.local apps/readest-app/.env.local

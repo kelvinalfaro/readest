@@ -1,19 +1,22 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
+vi.mock('@tauri-apps/plugin-os', () => ({ type: vi.fn(() => 'windows') }));
 vi.mock('@/services/environment', () => ({
   isTauriAppPlatform: vi.fn(),
   isWebAppPlatform: vi.fn(),
 }));
 vi.mock('@/utils/bridge', () => ({
-  isSyncKeychainAvailable: vi.fn(),
+  isSecureItemStoreAvailable: vi.fn(),
+  getAndroidDeviceType: vi.fn(),
   getSecureItem: vi.fn(),
   setSecureItem: vi.fn(),
   clearSecureItem: vi.fn(),
 }));
 
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
-import { isSyncKeychainAvailable } from '@/utils/bridge';
+import { type as osType } from '@tauri-apps/plugin-os';
+import { getAndroidDeviceType, isSecureItemStoreAvailable } from '@/utils/bridge';
 import {
   buildGoogleDriveProvider,
   getGoogleClientId,
@@ -33,7 +36,7 @@ describe('buildGoogleDriveProvider', () => {
     expect(getGoogleClientId()).toMatch(/\.apps\.googleusercontent\.com$/);
     // With a baked default + keychain, Drive builds even without an env override.
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSyncKeychainAvailable).mockResolvedValue({ available: true });
+    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
     expect(await buildGoogleDriveProvider()).not.toBeNull();
   });
 
@@ -46,23 +49,33 @@ describe('buildGoogleDriveProvider', () => {
     vi.stubEnv('NEXT_PUBLIC_GOOGLE_CLIENT_ID', CLIENT_ID);
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
     expect(await buildGoogleDriveProvider()).toBeNull();
-    expect(isSyncKeychainAvailable).not.toHaveBeenCalled();
+    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
   });
 
   test('returns null when the keychain is unavailable', async () => {
     vi.stubEnv('NEXT_PUBLIC_GOOGLE_CLIENT_ID', CLIENT_ID);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSyncKeychainAvailable).mockResolvedValue({ available: false });
+    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: false });
     expect(await buildGoogleDriveProvider()).toBeNull();
   });
 
   test('builds a provider when client id + keychain are available', async () => {
     vi.stubEnv('NEXT_PUBLIC_GOOGLE_CLIENT_ID', CLIENT_ID);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSyncKeychainAvailable).mockResolvedValue({ available: true });
+    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
     const provider = await buildGoogleDriveProvider();
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
+  });
+
+  test('uses the limited-input credentials on Android TV', async () => {
+    vi.stubEnv('NEXT_PUBLIC_GOOGLE_TV_CLIENT_ID', 'tv.apps.googleusercontent.com');
+    vi.stubEnv('NEXT_PUBLIC_GOOGLE_TV_CLIENT_SECRET', 'tv-secret');
+    vi.mocked(isTauriAppPlatform).mockReturnValue(true);
+    vi.mocked(osType).mockReturnValue('android');
+    vi.mocked(getAndroidDeviceType).mockResolvedValue({ isTV: true });
+    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
+    expect(await buildGoogleDriveProvider()).not.toBeNull();
   });
 
   test('web: falls back to the baked official web client id when the env override is unset', async () => {
@@ -73,7 +86,7 @@ describe('buildGoogleDriveProvider', () => {
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
     // The web path never touches the keychain.
-    expect(isSyncKeychainAvailable).not.toHaveBeenCalled();
+    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
   });
 
   test('web: the env override wins over the baked web default', async () => {
@@ -83,6 +96,6 @@ describe('buildGoogleDriveProvider', () => {
     const provider = await buildGoogleDriveProvider();
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
-    expect(isSyncKeychainAvailable).not.toHaveBeenCalled();
+    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
   });
 });

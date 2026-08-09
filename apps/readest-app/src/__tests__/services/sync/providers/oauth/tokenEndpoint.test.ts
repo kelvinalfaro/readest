@@ -64,6 +64,25 @@ describe('tokenEndpoint', () => {
     expect(tokens.refreshToken).toBeUndefined();
   });
 
+  test('refreshAccessToken includes a limited-input client secret when supplied', async () => {
+    let captured: { init: RequestInit } | undefined;
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      captured = { init };
+      return jsonResponse({ access_token: 'AT2', expires_in: 3600 });
+    });
+    await refreshAccessToken(
+      {
+        refreshToken: 'RT',
+        clientId: 'tv-client',
+        clientSecret: 'tv-secret',
+        tokenEndpoint: 'https://oauth2.googleapis.com/token',
+      },
+      fetchFn,
+    );
+    const form = new URLSearchParams(captured?.init.body as string);
+    expect(form.get('client_secret')).toBe('tv-secret');
+  });
+
   test('clamps expiry so a token shorter than the margin is not already-expired', async () => {
     const fetchFn = async () => jsonResponse({ access_token: 'AT', expires_in: 30 });
     const tokens = await exchangeCode(

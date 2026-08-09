@@ -1529,6 +1529,23 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
     }
 
     @Command
+    fun is_secure_item_store_available(invoke: Invoke) {
+        val ret = JSObject()
+        try {
+            // Probe the store that OAuth tokens actually use. The sync
+            // passphrase lives in a separate encrypted preferences file and
+            // must not prevent cloud sign-in when only that file is stale.
+            openSecureItemsPrefs()
+            ret.put("available", true)
+        } catch (e: Exception) {
+            Log.e("NativeBridgePlugin", "is_secure_item_store_available failed", e)
+            ret.put("available", false)
+            ret.put("error", e.message ?: "unknown")
+        }
+        invoke.resolve(ret)
+    }
+
+    @Command
     fun set_secure_item(invoke: Invoke) {
         val args = invoke.parseArgs(SecureItemSetArgs::class.java)
         val ret = JSObject()

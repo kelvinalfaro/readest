@@ -10,7 +10,9 @@
  * half-built provider that would fail on first use.
  */
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+import { type as osType } from '@tauri-apps/plugin-os';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
+import { getAndroidDeviceType } from '@/utils/bridge';
 import type { FileSyncProvider } from '@/services/sync/file/provider';
 import { createGoogleDriveProvider, type FetchFn } from './GoogleDriveProvider';
 import { createGoogleDriveAuth } from './googleDriveAuth';
@@ -32,6 +34,39 @@ const OFFICIAL_GOOGLE_CLIENT_ID =
 
 export const getGoogleClientId = (): string | undefined =>
   process.env['NEXT_PUBLIC_GOOGLE_CLIENT_ID'] || OFFICIAL_GOOGLE_CLIENT_ID;
+
+export const getGoogleTvClientId = (): string | undefined =>
+  process.env['NEXT_PUBLIC_GOOGLE_TV_CLIENT_ID'] || undefined;
+
+export const getGoogleTvClientSecret = (): string | undefined =>
+  process.env['NEXT_PUBLIC_GOOGLE_TV_CLIENT_SECRET'] || undefined;
+
+export interface GoogleNativeCredentials {
+  clientId: string;
+  clientSecret?: string;
+  isTV: boolean;
+}
+
+/** Resolve the OAuth client registered for this Android form factor. */
+export const resolveGoogleNativeCredentials = async (
+  isTVHint?: boolean,
+): Promise<GoogleNativeCredentials | null> => {
+  let isTV = isTVHint ?? false;
+  if (isTVHint === undefined) {
+    try {
+      isTV = osType() === 'android' && (await getAndroidDeviceType()).isTV;
+    } catch {
+      isTV = false;
+    }
+  }
+  if (isTV) {
+    const clientId = getGoogleTvClientId();
+    const clientSecret = getGoogleTvClientSecret();
+    return clientId && clientSecret ? { clientId, clientSecret, isTV: true } : null;
+  }
+  const clientId = getGoogleClientId();
+  return clientId ? { clientId, isTV: false } : null;
+};
 
 /**
  * The official Readest **Web-type** Google OAuth client id used by the browser
@@ -65,8 +100,8 @@ export const buildGoogleDriveProvider = async (): Promise<FileSyncProvider | nul
     return createGoogleDriveProvider(new WebDriveAuth(fetchFn), fetchFn);
   }
 
-  const clientId = getGoogleClientId();
-  if (!clientId) return null;
+  const credentials = await resolveGoogleNativeCredentials();
+  if (!credentials) return null;
 
   // No ephemeral fallback for the refresh token: if secure storage is missing,
   // Drive is simply not available here.
@@ -74,6 +109,11 @@ export const buildGoogleDriveProvider = async (): Promise<FileSyncProvider | nul
   if (!persistence) return null;
 
   const fetchFn = resolveFetch();
-  const auth = createGoogleDriveAuth({ clientId, fetchFn, persistence });
+  const auth = createGoogleDriveAuth({
+    clientId: credentials.clientId,
+    clientSecret: credentials.clientSecret,
+    fetchFn,
+    persistence,
+  });
   return createGoogleDriveProvider(auth, fetchFn);
 };

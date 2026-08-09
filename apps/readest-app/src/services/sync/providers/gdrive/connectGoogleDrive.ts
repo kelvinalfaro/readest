@@ -17,6 +17,8 @@ export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
 export interface ConnectGoogleDriveDeps {
   /** The env-baked official OAuth client id. */
   clientId: string;
+  /** Optional secret used only by Google's limited-input TV client. */
+  clientSecret?: string;
   /** Platform `fetch` for the token exchange + `about.get`. */
   fetchFn: FetchFn;
   /** Where the token set is saved (keychain). */
@@ -52,6 +54,7 @@ export const connectGoogleDrive = async (
 
   const auth = createGoogleDriveAuth({
     clientId: deps.clientId,
+    clientSecret: deps.clientSecret,
     fetchFn: deps.fetchFn,
     persistence: deps.persistence,
     initialTokens: tokens,

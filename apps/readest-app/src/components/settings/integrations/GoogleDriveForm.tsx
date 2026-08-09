@@ -9,6 +9,7 @@ import {
   runGoogleDriveConnect,
   runGoogleDriveDisconnect,
 } from '@/services/sync/providers/gdrive/googleDriveConnect';
+import type { GoogleTvDevicePrompt } from '@/services/sync/providers/gdrive/googleTvDeviceFlow';
 import { hasValidWebDriveToken } from '@/services/sync/providers/gdrive/auth/webTokenStore';
 import { Tips } from '../primitives';
 import FileSyncForm from './FileSyncForm';
@@ -45,12 +46,13 @@ const primaryButtonClass = clsx(
 const GoogleDriveForm: React.FC = () => {
   const _ = useTranslation();
   const { settings, setSettings, saveSettings } = useSettingsStore();
-  const { envConfig } = useEnv();
+  const { envConfig, appService } = useEnv();
 
   const stored = settings.googleDrive;
   const isActive = !!stored?.enabled;
   const isConfigured = !!stored?.accountLabel;
   const [isConnecting, setIsConnecting] = useState(false);
+  const [devicePrompt, setDevicePrompt] = useState<GoogleTvDevicePrompt | null>(null);
 
   // On web the access token is short-lived (no refresh token) and lives in
   // sessionStorage, so an active connection can sit with an expired/absent
@@ -78,7 +80,10 @@ const GoogleDriveForm: React.FC = () => {
     if (isConnecting) return;
     setIsConnecting(true);
     try {
-      const { accountLabel } = await runGoogleDriveConnect();
+      const { accountLabel } = await runGoogleDriveConnect({
+        isTV: appService?.isTV,
+        onDevicePrompt: setDevicePrompt,
+      });
       // Only mark connected after the token persisted (runGoogleDriveConnect
       // throws if the keychain save fails).
       await activate(accountLabel ?? undefined);
@@ -87,6 +92,7 @@ const GoogleDriveForm: React.FC = () => {
       console.warn('[gdrive] connect failed', e);
       eventDispatcher.dispatch('toast', { type: 'error', message: _('Failed to connect') });
     } finally {
+      setDevicePrompt(null);
       setIsConnecting(false);
     }
   };
@@ -168,6 +174,16 @@ const GoogleDriveForm: React.FC = () => {
 
   return (
     <div className='space-y-5'>
+      {devicePrompt && (
+        <div className='rounded-lg border border-base-content/30 p-4 text-center'>
+          <p className='text-sm'>{_('On your phone or computer, visit:')}</p>
+          <p className='mt-2 break-all text-lg font-semibold'>{devicePrompt.verificationUrl}</p>
+          <p className='mt-4 text-sm'>{_('Then enter this code:')}</p>
+          <p className='mt-2 font-mono text-3xl font-bold tracking-widest'>
+            {devicePrompt.userCode}
+          </p>
+        </div>
+      )}
       <div className='flex justify-end pt-1'>
         <button
           type='button'
@@ -186,7 +202,11 @@ const GoogleDriveForm: React.FC = () => {
         </button>
       </div>
       <Tips>
-        <li>{_('Sign-in opens in your browser.')}</li>
+        <li>
+          {appService?.isTV
+            ? _('Complete sign-in on your phone or computer using the code shown here.')
+            : _('Sign-in opens in your browser.')}
+        </li>
         <li>{_('Readest only accesses the files it creates in your Drive.')}</li>
       </Tips>
     </div>

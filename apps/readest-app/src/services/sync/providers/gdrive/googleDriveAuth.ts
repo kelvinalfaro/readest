@@ -18,12 +18,14 @@ export const resolveGoogleAccountLabel = async (
 
 export const createGoogleDriveAuth = (deps: {
   clientId: string;
+  clientSecret?: string;
   fetchFn: FetchFn;
   persistence: TokenPersistence;
   initialTokens?: TokenSet;
 }): PersistedOAuth =>
   new PersistedOAuth({
     clientId: deps.clientId,
+    clientSecret: deps.clientSecret,
     tokenEndpoint: GOOGLE_TOKEN_ENDPOINT,
     fetchFn: deps.fetchFn,
     persistence: deps.persistence,
