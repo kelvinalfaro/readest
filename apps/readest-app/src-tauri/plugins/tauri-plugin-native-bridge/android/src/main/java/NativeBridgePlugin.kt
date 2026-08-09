@@ -1528,6 +1528,22 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         )
     }
 
+    private fun openSecureItemsPrefsWithRecovery(): android.content.SharedPreferences {
+        return try {
+            openSecureItemsPrefs()
+        } catch (e: java.security.GeneralSecurityException) {
+            // Android backup/restore can restore encrypted preferences without
+            // the device-bound Keystore key that encrypted them. Those values
+            // cannot be recovered, so replace only the OAuth token store and
+            // leave the rest of Readest's app data untouched.
+            Log.w("NativeBridgePlugin", "Replacing unreadable secure item store", e)
+            if (!activity.deleteSharedPreferences(secureItemsPrefsName)) {
+                throw e
+            }
+            openSecureItemsPrefs()
+        }
+    }
+
     @Command
     fun is_secure_item_store_available(invoke: Invoke) {
         val ret = JSObject()
@@ -1535,7 +1551,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
             // Probe the store that OAuth tokens actually use. The sync
             // passphrase lives in a separate encrypted preferences file and
             // must not prevent cloud sign-in when only that file is stale.
-            openSecureItemsPrefs()
+            openSecureItemsPrefsWithRecovery()
             ret.put("available", true)
         } catch (e: Exception) {
             Log.e("NativeBridgePlugin", "is_secure_item_store_available failed", e)
@@ -1550,7 +1566,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(SecureItemSetArgs::class.java)
         val ret = JSObject()
         try {
-            openSecureItemsPrefs().edit().putString(args.key, args.value).apply()
+            openSecureItemsPrefsWithRecovery().edit().putString(args.key, args.value).apply()
             ret.put("success", true)
         } catch (e: Exception) {
             Log.e("NativeBridgePlugin", "set_secure_item failed", e)
@@ -1565,7 +1581,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(SecureItemGetArgs::class.java)
         val ret = JSObject()
         try {
-            val value = openSecureItemsPrefs().getString(args.key, null)
+            val value = openSecureItemsPrefsWithRecovery().getString(args.key, null)
             if (value != null) ret.put("value", value)
         } catch (e: Exception) {
             Log.e("NativeBridgePlugin", "get_secure_item failed", e)
@@ -1579,7 +1595,7 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
         val args = invoke.parseArgs(SecureItemGetArgs::class.java)
         val ret = JSObject()
         try {
-            openSecureItemsPrefs().edit().remove(args.key).apply()
+            openSecureItemsPrefsWithRecovery().edit().remove(args.key).apply()
             ret.put("success", true)
         } catch (e: Exception) {
             Log.e("NativeBridgePlugin", "clear_secure_item failed", e)
