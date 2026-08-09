@@ -6,14 +6,13 @@ vi.mock('@/services/environment', () => ({
   isWebAppPlatform: vi.fn(),
 }));
 vi.mock('@/utils/bridge', () => ({
-  isSecureItemStoreAvailable: vi.fn(),
   getSecureItem: vi.fn(),
   setSecureItem: vi.fn(),
   clearSecureItem: vi.fn(),
 }));
 
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
-import { isSecureItemStoreAvailable } from '@/utils/bridge';
+import { getSecureItem } from '@/utils/bridge';
 import {
   buildOneDriveProvider,
   getMicrosoftClientId,
@@ -36,7 +35,7 @@ describe('buildOneDriveProvider', () => {
     // With a baked default + keychain, OneDrive builds even without an env override.
     vi.mocked(isWebAppPlatform).mockReturnValue(false);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
+    vi.mocked(getSecureItem).mockResolvedValue({});
     expect(await buildOneDriveProvider()).not.toBeNull();
   });
 
@@ -52,7 +51,7 @@ describe('buildOneDriveProvider', () => {
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
     // The web path never touches the keychain.
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 
   test('web: builds with the baked client id when the env override is unset', async () => {
@@ -61,7 +60,7 @@ describe('buildOneDriveProvider', () => {
     const provider = await buildOneDriveProvider();
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 
   test('returns null off-Tauri (no secure token storage for the refresh token)', async () => {
@@ -69,14 +68,14 @@ describe('buildOneDriveProvider', () => {
     vi.mocked(isWebAppPlatform).mockReturnValue(false);
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
     expect(await buildOneDriveProvider()).toBeNull();
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 
   test('returns null when the keychain is unavailable', async () => {
     vi.stubEnv('NEXT_PUBLIC_MICROSOFT_CLIENT_ID', CLIENT_ID);
     vi.mocked(isWebAppPlatform).mockReturnValue(false);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: false });
+    vi.mocked(getSecureItem).mockResolvedValue({ error: 'unavailable' });
     expect(await buildOneDriveProvider()).toBeNull();
   });
 
@@ -84,7 +83,7 @@ describe('buildOneDriveProvider', () => {
     vi.stubEnv('NEXT_PUBLIC_MICROSOFT_CLIENT_ID', CLIENT_ID);
     vi.mocked(isWebAppPlatform).mockReturnValue(false);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
+    vi.mocked(getSecureItem).mockResolvedValue({});
     const provider = await buildOneDriveProvider();
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');

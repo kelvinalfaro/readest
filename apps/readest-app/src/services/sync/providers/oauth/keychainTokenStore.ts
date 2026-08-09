@@ -7,12 +7,7 @@
  * the refresh token — a provider is simply unavailable where secure storage is.
  */
 import { isTauriAppPlatform } from '@/services/environment';
-import {
-  clearSecureItem,
-  getSecureItem,
-  isSecureItemStoreAvailable,
-  setSecureItem,
-} from '@/utils/bridge';
+import { clearSecureItem, getSecureItem, setSecureItem } from '@/utils/bridge';
 import { FileSyncError } from '@/services/sync/file/provider';
 import type { TokenSet } from './tokenEndpoint';
 
@@ -64,8 +59,11 @@ export const createKeychainTokenPersistence = async (
 ): Promise<TokenPersistence | null> => {
   if (!isTauriAppPlatform()) return null;
   try {
-    const res = await isSecureItemStoreAvailable();
-    if (res.available) return new KeychainTokenPersistence(key, label);
+    // Probe through the already registered secure-item command. On Android this
+    // also performs recovery when backup/restore left an unreadable encrypted
+    // preferences file behind.
+    const res = await getSecureItem({ key });
+    if (!res.error) return new KeychainTokenPersistence(key, label);
   } catch (err) {
     console.warn(`[${label}] keychain probe threw`, err);
   }

@@ -12,6 +12,36 @@ vi.mock('@/services/tts/TTSController', () => ({ TTSController: class {} }));
 import { NativeTTSClient } from '@/services/tts/NativeTTSClient';
 import { invoke } from '@tauri-apps/api/core';
 
+describe('NativeTTSClient.init', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('initializes when the native engine responds promptly', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ success: true });
+    const client = new NativeTTSClient();
+
+    await expect(client.init()).resolves.toBe(true);
+    expect(client.initialized).toBe(true);
+  });
+
+  test('falls back instead of hanging when the native engine cold-start stalls', async () => {
+    vi.mocked(invoke).mockReturnValueOnce(new Promise(() => {}));
+    const client = new NativeTTSClient();
+    const result = client.init();
+
+    await vi.advanceTimersByTimeAsync(8000);
+
+    await expect(result).resolves.toBe(false);
+    expect(client.initialized).toBe(false);
+  });
+});
+
 describe('NativeTTSClient.stop', () => {
   beforeEach(() => {
     vi.clearAllMocks();

@@ -122,6 +122,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     private var textToSpeech: TextToSpeech? = null
+    private var initializationJob: Deferred<Boolean>? = null
     private var isInitialized = AtomicBoolean(false)
     private var isPaused = AtomicBoolean(false)
     private var isSpeaking = AtomicBoolean(false)
@@ -143,7 +144,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         cancelIdleTimer()
         coroutineScope.launch {
             try {
-                val success = initializeTTS()
+                val success = ensureTTSInitialized()
                 val result = JSObject().apply {
                     put("success", success)
                 }
@@ -180,6 +181,19 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             Log.e(TAG, "Exception during TTS initialization", e)
             @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
             continuation.resume(false) {}
+        }
+    }
+
+    private suspend fun ensureTTSInitialized(): Boolean {
+        if (isInitialized.get()) return true
+        initializationJob?.let { return it.await() }
+
+        val job = coroutineScope.async { initializeTTS() }
+        initializationJob = job
+        return try {
+            job.await()
+        } finally {
+            if (initializationJob === job) initializationJob = null
         }
     }
     
@@ -243,7 +257,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             try {
                 // Re-initialize TTS engine if it was shut down by the idle timer
                 if (!isInitialized.get()) {
-                    val success = initializeTTS()
+                    val success = ensureTTSInitialized()
                     if (!success) {
                         invoke.reject("Failed to re-initialize TTS engine")
                         return@launch
@@ -411,7 +425,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         coroutineScope.launch {
             try {
                 if (!isInitialized.get()) {
-                    initializeTTS()
+                    ensureTTSInitialized()
                 }
                 val voices = textToSpeech?.voices
                 val targetVoice = voices?.find { voice ->
@@ -440,7 +454,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         coroutineScope.launch {
             try {
                 if (!isInitialized.get()) {
-                    initializeTTS()
+                    ensureTTSInitialized()
                 }
                 val voices = textToSpeech?.voices?.map { voice ->
                     val voiceName = voice.name
@@ -595,6 +609,8 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             MediaPlaybackService.requestDeactivation()
             MediaPlaybackService.pluginEventTrigger = null
 
+            initializationJob?.cancel()
+            initializationJob = null
             textToSpeech?.shutdown()
             textToSpeech = null
             isInitialized.set(false)
@@ -620,6 +636,8 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             MediaPlaybackService.pluginEventTrigger = null
 
             coroutineScope.cancel()
+            initializationJob?.cancel()
+            initializationJob = null
             textToSpeech?.shutdown()
             textToSpeech = null
             isInitialized.set(false)

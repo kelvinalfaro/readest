@@ -427,12 +427,6 @@ export interface GetSecureItemResponse {
   error?: string;
 }
 
-export async function isSecureItemStoreAvailable(): Promise<SyncKeychainAvailableResponse> {
-  return invoke<SyncKeychainAvailableResponse>(
-    'plugin:native-bridge|is_secure_item_store_available',
-  );
-}
-
 export async function setSecureItem(request: SetSecureItemRequest): Promise<SecureItemResponse> {
   return invoke<SecureItemResponse>('plugin:native-bridge|set_secure_item', { payload: request });
 }

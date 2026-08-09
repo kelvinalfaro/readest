@@ -4,16 +4,10 @@ vi.mock('@/utils/bridge', () => ({
   getSecureItem: vi.fn(),
   setSecureItem: vi.fn(),
   clearSecureItem: vi.fn(),
-  isSecureItemStoreAvailable: vi.fn(),
 }));
 vi.mock('@/services/environment', () => ({ isTauriAppPlatform: vi.fn() }));
 
-import {
-  clearSecureItem,
-  getSecureItem,
-  isSecureItemStoreAvailable,
-  setSecureItem,
-} from '@/utils/bridge';
+import { clearSecureItem, getSecureItem, setSecureItem } from '@/utils/bridge';
 import { isTauriAppPlatform } from '@/services/environment';
 import { FileSyncError } from '@/services/sync/file/provider';
 import {
@@ -70,20 +64,21 @@ describe('createKeychainTokenPersistence', () => {
   test('returns null off-Tauri (no ephemeral fallback for the refresh token)', async () => {
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
     expect(await createKeychainTokenPersistence(KEY, LABEL)).toBeNull();
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 
   test('returns a keychain store when the probe reports available', async () => {
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValueOnce({ available: true });
+    vi.mocked(getSecureItem).mockResolvedValueOnce({});
     expect(await createKeychainTokenPersistence(KEY, LABEL)).toBeInstanceOf(
       KeychainTokenPersistence,
     );
+    expect(getSecureItem).toHaveBeenCalledWith({ key: KEY });
   });
 
   test('returns null when the keychain is unavailable', async () => {
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValueOnce({ available: false });
+    vi.mocked(getSecureItem).mockResolvedValueOnce({ error: 'unavailable' });
     expect(await createKeychainTokenPersistence(KEY, LABEL)).toBeNull();
   });
 });

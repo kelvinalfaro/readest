@@ -7,7 +7,6 @@ vi.mock('@/services/environment', () => ({
   isWebAppPlatform: vi.fn(),
 }));
 vi.mock('@/utils/bridge', () => ({
-  isSecureItemStoreAvailable: vi.fn(),
   getAndroidDeviceType: vi.fn(),
   getSecureItem: vi.fn(),
   setSecureItem: vi.fn(),
@@ -16,7 +15,7 @@ vi.mock('@/utils/bridge', () => ({
 
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
 import { type as osType } from '@tauri-apps/plugin-os';
-import { getAndroidDeviceType, isSecureItemStoreAvailable } from '@/utils/bridge';
+import { getAndroidDeviceType, getSecureItem } from '@/utils/bridge';
 import {
   buildGoogleDriveProvider,
   getGoogleClientId,
@@ -36,7 +35,7 @@ describe('buildGoogleDriveProvider', () => {
     expect(getGoogleClientId()).toMatch(/\.apps\.googleusercontent\.com$/);
     // With a baked default + keychain, Drive builds even without an env override.
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
+    vi.mocked(getSecureItem).mockResolvedValue({});
     expect(await buildGoogleDriveProvider()).not.toBeNull();
   });
 
@@ -49,20 +48,20 @@ describe('buildGoogleDriveProvider', () => {
     vi.stubEnv('NEXT_PUBLIC_GOOGLE_CLIENT_ID', CLIENT_ID);
     vi.mocked(isTauriAppPlatform).mockReturnValue(false);
     expect(await buildGoogleDriveProvider()).toBeNull();
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 
   test('returns null when the keychain is unavailable', async () => {
     vi.stubEnv('NEXT_PUBLIC_GOOGLE_CLIENT_ID', CLIENT_ID);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: false });
+    vi.mocked(getSecureItem).mockResolvedValue({ error: 'unavailable' });
     expect(await buildGoogleDriveProvider()).toBeNull();
   });
 
   test('builds a provider when client id + keychain are available', async () => {
     vi.stubEnv('NEXT_PUBLIC_GOOGLE_CLIENT_ID', CLIENT_ID);
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
+    vi.mocked(getSecureItem).mockResolvedValue({});
     const provider = await buildGoogleDriveProvider();
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
@@ -74,7 +73,7 @@ describe('buildGoogleDriveProvider', () => {
     vi.mocked(isTauriAppPlatform).mockReturnValue(true);
     vi.mocked(osType).mockReturnValue('android');
     vi.mocked(getAndroidDeviceType).mockResolvedValue({ isTV: true });
-    vi.mocked(isSecureItemStoreAvailable).mockResolvedValue({ available: true });
+    vi.mocked(getSecureItem).mockResolvedValue({});
     expect(await buildGoogleDriveProvider()).not.toBeNull();
   });
 
@@ -86,7 +85,7 @@ describe('buildGoogleDriveProvider', () => {
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
     // The web path never touches the keychain.
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 
   test('web: the env override wins over the baked web default', async () => {
@@ -96,6 +95,6 @@ describe('buildGoogleDriveProvider', () => {
     const provider = await buildGoogleDriveProvider();
     expect(provider).not.toBeNull();
     expect(provider?.rootPath).toBe('/');
-    expect(isSecureItemStoreAvailable).not.toHaveBeenCalled();
+    expect(getSecureItem).not.toHaveBeenCalled();
   });
 });
