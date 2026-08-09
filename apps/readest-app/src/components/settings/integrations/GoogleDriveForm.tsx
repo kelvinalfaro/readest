@@ -90,7 +90,11 @@ const GoogleDriveForm: React.FC = () => {
       eventDispatcher.dispatch('toast', { type: 'info', message: _('Connected') });
     } catch (e) {
       console.warn('[gdrive] connect failed', e);
-      eventDispatcher.dispatch('toast', { type: 'error', message: _('Failed to connect') });
+      const detail = e instanceof Error ? e.message : String(e);
+      eventDispatcher.dispatch('toast', {
+        type: 'error',
+        message: `${_('Failed to connect')}: ${detail}`,
+      });
     } finally {
       setDevicePrompt(null);
       setIsConnecting(false);
