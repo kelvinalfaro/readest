@@ -9,6 +9,14 @@ const syncLibrary = vi.fn().mockResolvedValue({ booksSynced: 0 });
 const pushBookFile = vi.fn().mockResolvedValue({ uploaded: true });
 const pushBookCover = vi.fn().mockResolvedValue({ uploaded: true });
 const downloadBookFile = vi.fn().mockResolvedValue(true);
+const saveSettings = vi.fn();
+const syncPortableSettings = vi.hoisted(() =>
+  vi.fn(async (_provider: unknown, settings: SystemSettings) => ({
+    settings,
+    localChanged: false,
+    remoteChanged: false,
+  })),
+);
 
 vi.mock('@/services/sync/file/providerRegistry', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/services/sync/file/providerRegistry')>();
@@ -21,6 +29,8 @@ vi.mock('@/services/sync/file/providerRegistry', async (importOriginal) => {
 vi.mock('@/services/sync/file/appLocalStore', () => ({
   createAppLocalStore: vi.fn(() => ({}) as never),
 }));
+
+vi.mock('@/services/sync/file/settingsSync', () => ({ syncPortableSettings }));
 
 vi.mock('@/services/sync/file/engine', () => ({
   FileSyncEngine: vi.fn(function (this: Record<string, unknown>) {
@@ -77,7 +87,7 @@ const translationFn = (key: string, params?: Record<string, string | number>) =>
 };
 
 const envConfig = {
-  getAppService: vi.fn(async () => ({ saveSettings: vi.fn() }) as never),
+  getAppService: vi.fn(async () => ({ saveSettings }) as never),
 } as never;
 
 const multiProviderSettings = {
@@ -101,12 +111,30 @@ describe('runFileLibrarySyncPass', () => {
     useLibraryStore.setState({ library: [makeBook('h1')], libraryLoaded: true });
     useFileSyncStore.setState({ byKind: {}, activeKind: null, lastErrorByKind: {} });
     setCachedUserPlan('pro');
+    saveSettings.mockReset();
+    syncPortableSettings.mockClear();
   });
 
   test('runs every enabled backend in a fixed order and sums the result', async () => {
     const result = await runFileLibrarySyncPass(envConfig, translationFn);
     expect(syncLibrary).toHaveBeenCalledTimes(2);
     expect(result?.booksSynced).toBe(2);
+  });
+
+  test('syncs portable settings through Google Drive before the library', async () => {
+    const restored = { ...multiProviderSettings, libraryColumns: 6 } as SystemSettings;
+    syncPortableSettings.mockResolvedValueOnce({
+      settings: restored,
+      localChanged: true,
+      remoteChanged: false,
+    });
+
+    await runFileLibrarySyncPass(envConfig, translationFn);
+
+    expect(syncPortableSettings).toHaveBeenCalledTimes(1);
+    expect(useSettingsStore.getState().settings.libraryColumns).toBe(6);
+    expect(saveSettings).toHaveBeenCalledWith(restored);
+    expect(syncLibrary).toHaveBeenCalledTimes(2);
   });
 
   test('holds the mutex for the whole pass', async () => {

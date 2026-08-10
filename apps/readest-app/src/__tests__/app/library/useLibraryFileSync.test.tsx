@@ -44,6 +44,7 @@ vi.mock('@/services/sync/file/runLibrarySync', () => ({
 
 const { useLibraryFileSync } = await import('@/app/library/hooks/useLibraryFileSync');
 const { useLibraryStore } = await import('@/store/libraryStore');
+const { useSettingsStore } = await import('@/store/settingsStore');
 
 const book = (hash: string): Book =>
   ({
@@ -56,6 +57,9 @@ beforeEach(() => {
   vi.useFakeTimers();
   routing.backends = [];
   useLibraryStore.setState({ library: [], libraryLoaded: true });
+  useSettingsStore.setState({
+    settings: { googleDrive: { enabled: false } } as never,
+  });
 });
 
 afterEach(() => {
@@ -130,6 +134,31 @@ describe('useLibraryFileSync trigger (issue #5062 Task 8)', () => {
     });
 
     expect(runFileLibrarySyncPass).not.toHaveBeenCalled();
+  });
+
+  it('schedules Google Drive sync when portable app settings change', async () => {
+    routing.backends = ['gdrive'];
+    useSettingsStore.setState({
+      settings: { googleDrive: { enabled: true }, libraryColumns: 2 } as never,
+    });
+
+    const { rerender } = renderHook(() => useLibraryFileSync());
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+    runFileLibrarySyncPass.mockClear();
+
+    act(() => {
+      useSettingsStore.setState({
+        settings: { googleDrive: { enabled: true }, libraryColumns: 5 } as never,
+      });
+    });
+    rerender();
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+
+    expect(runFileLibrarySyncPass).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the debounced trigger stable across unrelated re-renders', async () => {

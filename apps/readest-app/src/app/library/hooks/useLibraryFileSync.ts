@@ -7,6 +7,7 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { debounce } from '@/utils/debounce';
 import { getActiveFileSyncBackends } from '@/services/sync/cloudSyncProvider';
 import { runFileLibrarySyncPass } from '@/services/sync/file/runLibrarySync';
+import { sanitizeSettingsForBackup } from '@/services/backupService';
 
 /**
  * Library-scoped auto-sync for every enabled third-party cloud backend (#5062) —
@@ -39,6 +40,12 @@ export const useLibraryFileSync = () => {
   const { userProfilePlan } = useQuotaStats();
 
   const hasBackends = getActiveFileSyncBackends(settings, userProfilePlan ?? 'free').length > 0;
+  // Drive also carries a portable settings.json. Hash only the sanitized
+  // snapshot so device-local timestamps/cursors written by a completed pass do
+  // not schedule another pass, while a real preference change does.
+  const googleDriveSettingsSnapshot = settings.googleDrive?.enabled
+    ? JSON.stringify(sanitizeSettingsForBackup(settings))
+    : null;
 
   // Keep one stable debounced trigger that always calls the latest pass (via
   // ref), so it isn't recreated — and lost — on every settings change.
@@ -47,11 +54,11 @@ export const useLibraryFileSync = () => {
   const debouncedSync = useMemo(() => debounce(() => passRef.current(), SYNC_DEBOUNCE_MS), []);
   useEffect(() => () => debouncedSync.cancel(), [debouncedSync]);
 
-  // Library changes — import (adds a row), delete (sets deletedAt), book close
-  // (bumps updatedAt) — all mutate `library`, so this single effect covers them
-  // plus the initial load pull.
+  // Library changes and portable Google Drive settings changes share the same
+  // quiet window. The initial loaded-library pass restores settings.json on a
+  // fresh device before its defaults can be published.
   useEffect(() => {
     if (!hasBackends || !libraryLoaded) return;
     debouncedSync();
-  }, [library, libraryLoaded, hasBackends, debouncedSync]);
+  }, [library, libraryLoaded, hasBackends, googleDriveSettingsSnapshot, debouncedSync]);
 };

@@ -20,6 +20,7 @@ import {
 } from '@/services/sync/file/providerRegistry';
 import { createAppLocalStore } from '@/services/sync/file/appLocalStore';
 import { FileSyncEngine, type SyncLibraryResult } from '@/services/sync/file/engine';
+import { syncPortableSettings } from '@/services/sync/file/settingsSync';
 
 /**
  * Whether a backend's transport can work at all right now. Web Google Drive
@@ -75,20 +76,43 @@ const syncOneBackend = async (
   _: TranslationFunc,
 ): Promise<SyncLibraryResult | null> => {
   const appService = await envConfig.getAppService();
-  const current = useSettingsStore.getState().settings;
-  const engine = await buildEngine(envConfig, kind);
-  if (!engine) return null;
+  if (!canBackendRun(kind)) return null;
+  let current = useSettingsStore.getState().settings;
 
   const key = settingsKeyForBackend(kind);
-  const ps = current[key];
+  let ps = current[key];
   let deviceId = ps?.deviceId;
   if (!deviceId) {
     deviceId = uuidv4();
     const next = { ...current, [key]: { ...current[key], deviceId } };
     useSettingsStore.getState().setSettings(next);
     await appService.saveSettings(next);
+    current = next;
+    ps = current[key];
   }
 
+  const fileProvider = await createFileSyncProvider(kind, current);
+  if (!fileProvider) return null;
+
+  // Google Drive is the settings backup requested by the CWA fork. Restore it
+  // before constructing the local store so the same pass uses the reconciled
+  // preferences while reading configs and writing provider bookkeeping.
+  if (kind === 'gdrive') {
+    const settingsResult = await syncPortableSettings(fileProvider, current, {
+      deviceId,
+      baselineId: `gdrive:${current.googleDrive?.accountLabel ?? 'default'}`,
+      strategy: ps?.strategy,
+    });
+    if (settingsResult.localChanged) {
+      current = settingsResult.settings;
+      useSettingsStore.getState().setSettings(current);
+      await appService.saveSettings(current);
+      ps = current[key];
+    }
+  }
+
+  const store = createAppLocalStore({ appService, settings: current, envConfig });
+  const engine = new FileSyncEngine(fileProvider, store);
   const strategy = ps?.strategy ?? 'silent';
   const result = await engine.syncLibrary(useLibraryStore.getState().library, {
     strategy: strategy === 'prompt' ? 'silent' : strategy,

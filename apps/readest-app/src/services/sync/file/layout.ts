@@ -12,6 +12,7 @@ import { makeSafeFilename } from '@/utils/misc';
  *   <rootPath>/
  *     Readest/
  *       library.json                                 ← shared index
+ *       settings.json                                ← portable app settings
  *       books/
  *         <hash>/
  *           <safe-title>.<ext>                       ← the book file
@@ -30,6 +31,7 @@ import { makeSafeFilename } from '@/utils/misc';
 export const SYNC_BASE_DIR = 'Readest';
 export const SYNC_BOOKS_DIR = 'books';
 export const SYNC_LIBRARY_FILE = 'library.json';
+export const SYNC_SETTINGS_FILE = 'settings.json';
 export const SYNC_BOOK_CONFIG_FILE = 'config.json';
 export const SYNC_BOOK_COVER_FILE = 'cover.png';
 // TTS section packs (<section>-<keysfp>.mp3 + .json sidecars) live in a
@@ -78,6 +80,10 @@ export const buildBookConfigPath = (rootPath: string, bookHash: string): string 
 /** Absolute path of the shared library.json index. */
 export const buildLibraryPath = (rootPath: string): string =>
   join(buildBasePath(rootPath), SYNC_LIBRARY_FILE);
+
+/** Absolute path of the portable app-settings snapshot. */
+export const buildSettingsPath = (rootPath: string): string =>
+  join(buildBasePath(rootPath), SYNC_SETTINGS_FILE);
 
 /**
  * Friendly book file name "<sanitized title>.<ext>" used inside the
