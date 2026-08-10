@@ -274,7 +274,7 @@ const IntegrationsPanel: React.FC = () => {
           parentLabel={_('Integrations')}
           currentLabel={_('Google Drive')}
           description={_(
-            'Sync your library, reading progress, and highlights with your Google Drive.',
+            'Sync your library, reading progress, highlights, and portable app settings with your Google Drive.',
           )}
           onBack={() => setSubPage(null)}
         />
@@ -289,7 +289,7 @@ const IntegrationsPanel: React.FC = () => {
               </li>
               <li>
                 {_(
-                  'App settings, reading statistics, and dictionaries still sync through your Readest account while signed in.',
+                  'Portable app settings also sync through Google Drive. Reading statistics and dictionaries still sync through your Readest account while signed in.',
                 )}
               </li>
             </Tips>
