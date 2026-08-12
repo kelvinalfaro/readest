@@ -76,7 +76,7 @@ import { manageSyntaxHighlighting } from '@/utils/highlightjs';
 import { getViewInsets } from '@/utils/insets';
 import { collectDocumentImages, DocumentImage } from '../utils/documentImages';
 import { footerReservesBand } from '../utils/footerBand';
-import { showTransientSearchHighlight } from '../utils/searchHighlight';
+import { showTransientHighlight } from '../utils/transientHighlight';
 import { handleA11yNavigation } from '@/utils/a11y';
 import { isCJKLang } from '@/utils/lang';
 import { getLocale } from '@/utils/misc';
@@ -281,7 +281,13 @@ const FoliateViewer: React.FC<{
           const viewSettings = getViewSettings(bookKey);
           const bookData = getBookData(bookKey);
           if (viewSettings && detail.type === 'text/css')
-            return transformStylesheet(data, width, height, viewSettings.vertical);
+            return transformStylesheet(
+              data,
+              width,
+              height,
+              viewSettings.vertical,
+              bookData?.isFixedLayout,
+            );
           const isHtml = detail.type === 'application/xhtml+xml' || detail.type === 'text/html';
           if (viewSettings && bookData && isHtml) {
             const ctx: TransformContext = {
@@ -367,7 +373,7 @@ const FoliateViewer: React.FC<{
       });
 
       if (bookDoc.rendition?.layout === 'pre-paginated') {
-        applyFixedlayoutStyles(detail.doc, viewSettings);
+        applyFixedlayoutStyles(detail.doc, viewSettings, undefined, bookData.book?.format);
         const themeCode = getThemeCode();
         if (bookData.book?.format === 'PDF' && themeCode && renderer) {
           renderer.pageColors = viewSettings.applyThemeToPDF
@@ -811,7 +817,7 @@ const FoliateViewer: React.FC<{
         setPreviewMode(bookKey, true);
       }
       if (overrideLocation && searchParams?.get('highlight') === 'search') {
-        librarySearchHighlightTimerRef.current = await showTransientSearchHighlight(
+        librarySearchHighlightTimerRef.current = await showTransientHighlight(
           view,
           overrideLocation,
         );
@@ -934,7 +940,7 @@ const FoliateViewer: React.FC<{
       const docs = viewRef.current.renderer.getContents();
       docs.forEach(({ doc }) => {
         if (bookDoc.rendition?.layout === 'pre-paginated') {
-          applyFixedlayoutStyles(doc, viewSettings);
+          applyFixedlayoutStyles(doc, viewSettings, undefined, bookData?.book?.format);
         }
         applyThemeModeClass(doc, isDarkMode);
         applyScrollModeClass(doc, viewSettings.scrolled || false);

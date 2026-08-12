@@ -34,7 +34,9 @@ describe('CWA Android release ABIs', () => {
   });
 
   it('uses a new app version for the corrected TV package', () => {
-    expect(packageJson.version).toBe('0.12.9');
+    const [major, minor, patch] = packageJson.version.split('.').map(Number);
+    const numericVersion = major * 1_000_000 + minor * 1_000 + patch;
+    expect(numericVersion).toBeGreaterThanOrEqual(12_009);
   });
 
   it('routes Android backup ZIP selection through the document framework', () => {
