@@ -62,6 +62,10 @@ import { findExistingBookForPublication } from './utils/findExistingBook';
 import { persistDownloadedBook } from './utils/persistDownloadedBook';
 import Dialog from '@/components/Dialog';
 import { addCWABookSource, getCWASettings, resolveCWAUrl } from '@/services/cwa';
+import {
+  addBookOrbitBookSource,
+  getBookOrbitSettings,
+} from '@/services/bookorbit/librarySubscriptions';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
 import { uniqueId } from '@/utils/misc';
 
@@ -115,15 +119,21 @@ export default function BrowserPage() {
   const catalogUrl = searchParams?.get('url') || '';
   const catalogId = searchParams?.get('id') || '';
   const cwaSubscriptionId = searchParams?.get('cwaSubscriptionId') || '';
+  const bookorbitSubscriptionId = searchParams?.get('bookorbitSubscriptionId') || '';
   const cwa = getCWASettings(settings);
   const cwaSubscription = cwa.subscriptions.find((sub) => sub.id === cwaSubscriptionId);
+  const bookorbit = getBookOrbitSettings(settings);
+  const bookorbitSubscription = bookorbit.subscriptions.find(
+    (subscription) => subscription.id === bookorbitSubscriptionId,
+  );
   const effectiveCatalogUrl = cwaSubscription
     ? resolveCWAUrl(cwa, cwaSubscription.url)
-    : catalogUrl;
+    : bookorbitSubscription?.url || catalogUrl;
   const catalog = settings.opdsCatalogs?.find((catalog) => catalog.id === catalogId);
-  const catalogSourceId = cwaSubscription
-    ? computeOpdsCatalogContentId(effectiveCatalogUrl)
-    : catalog?.contentId || catalogId || catalogUrl;
+  const catalogSourceId =
+    cwaSubscription || bookorbitSubscription
+      ? computeOpdsCatalogContentId(effectiveCatalogUrl)
+      : catalog?.contentId || catalogId || catalogUrl;
   // Captured once at mount so the restore effect targets exactly the
   // detail the URL described when /opds first loaded — typically after a
   // Reader → webview-back. Subsequent in-page navigation can mutate the
@@ -393,7 +403,11 @@ export default function BrowserPage() {
         return;
       }
       const catalog = settings.opdsCatalogs?.find((cat) => cat.id === catalogId);
-      const { username, password } = cwaSubscription ? cwa : catalog || {};
+      const { username, password } = cwaSubscription
+        ? cwa
+        : bookorbitSubscription
+          ? { username: bookorbit.opdsUsername, password: bookorbit.opdsPassword }
+          : catalog || {};
       if (username || password) {
         usernameRef.current = username;
         passwordRef.current = password;
@@ -401,7 +415,9 @@ export default function BrowserPage() {
         usernameRef.current = null;
         passwordRef.current = null;
       }
-      customHeadersRef.current = normalizeCustomHeaders(catalog?.customHeaders);
+      customHeadersRef.current = normalizeCustomHeaders(
+        bookorbitSubscription ? bookorbit.customHeaders : catalog?.customHeaders,
+      );
       if (libraryLoaded) {
         lastLoadedKeyRef.current = loadKey;
         loadOPDS(url);
@@ -412,7 +428,15 @@ export default function BrowserPage() {
       setViewMode('error');
       setError(new Error('No OPDS URL provided'));
     }
-  }, [effectiveCatalogUrl, catalogId, settings, libraryLoaded, loadOPDS, cwaSubscriptionId]);
+  }, [
+    effectiveCatalogUrl,
+    catalogId,
+    settings,
+    libraryLoaded,
+    loadOPDS,
+    cwaSubscriptionId,
+    bookorbitSubscriptionId,
+  ]);
 
   const handleNavigate = useCallback(
     (url: string, isSearch = false) => {
@@ -677,6 +701,16 @@ export default function BrowserPage() {
                 downloadedAt: Date.now(),
               });
             }
+            if (book && bookorbitSubscription) {
+              addBookOrbitBookSource(book, {
+                subscriptionId: bookorbitSubscription.id,
+                subscriptionName: bookorbitSubscription.name,
+                catalogId: `bookorbit-sub-${bookorbitSubscription.id}`,
+                entryId: publication?.metadata?.id,
+                sourceUrl: url,
+                downloadedAt: Date.now(),
+              });
+            }
             if (user && book && !book.uploadedAt && isReadestCloudStorageActive(settings)) {
               setTimeout(() => {
                 transferManager.queueUpload(book);
@@ -701,6 +735,7 @@ export default function BrowserPage() {
       libraryLoaded,
       catalogSourceId,
       cwaSubscription,
+      bookorbitSubscription,
       publication,
       publicationCoverHref,
     ],
@@ -1044,7 +1079,7 @@ export default function BrowserPage() {
           baseURL={state.baseURL}
           resolveURL={resolveURL}
           onNavigate={handleNavigate}
-          onAddCatalog={cwaSubscription ? undefined : handleOpenAddCatalog}
+          onAddCatalog={cwaSubscription || bookorbitSubscription ? undefined : handleOpenAddCatalog}
         />
       </div>
       <main className='flex-1 overflow-auto'>
@@ -1080,7 +1115,9 @@ export default function BrowserPage() {
             resolveURL={resolveURL}
             onGenerateCachedImageUrl={handleGenerateCachedImageUrl}
             isOPDSCatalog={isOPDSCatalog}
-            onAddCatalog={cwaSubscription ? undefined : handleOpenAddCatalog}
+            onAddCatalog={
+              cwaSubscription || bookorbitSubscription ? undefined : handleOpenAddCatalog
+            }
           />
         )}
 

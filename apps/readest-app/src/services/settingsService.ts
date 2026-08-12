@@ -161,6 +161,11 @@ export async function loadSettings(ctx: Context): Promise<SystemSettings> {
     ...DEFAULT_AI_SETTINGS,
     ...settings.aiSettings,
   };
+  settings.bookorbit = {
+    ...DEFAULT_SYSTEM_SETTINGS.bookorbit!,
+    ...settings.bookorbit,
+    subscriptions: settings.bookorbit?.subscriptions ?? [],
+  };
 
   settings.localBooksDir = await ctx.fs.getPrefix('Books');
 

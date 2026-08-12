@@ -324,8 +324,16 @@ const fetchCWAFeed = async (
   url: string,
   username: string,
   password: string,
+  customHeaders: Record<string, string> = {},
 ): Promise<{ feed: OPDSFeed; baseURL: string } | null> => {
-  const response = await fetchWithAuth(url, username, password, isWebAppPlatform());
+  const response = await fetchWithAuth(
+    url,
+    username,
+    password,
+    isWebAppPlatform(),
+    {},
+    customHeaders,
+  );
   if (!response.ok) return null;
   const text = await response.text();
   const feed = parseOPDSFeed(text);
@@ -337,14 +345,63 @@ const addCandidate = (
   candidates: Map<string, CWAShelfCandidate>,
   item: OPDSNavigationItem,
   baseURL: string,
+  idPrefix = 'cwa-discovered',
 ) => {
   if (!item.href) return;
   const url = resolveURL(item.href, baseURL);
   candidates.set(url, {
-    id: `cwa-discovered-${computeOpdsCatalogContentId(url)}`,
+    id: `${idPrefix}-${computeOpdsCatalogContentId(url)}`,
     name: item.title?.trim() || url,
     url,
   });
+};
+
+export interface OPDSShelfDiscoveryOptions {
+  idPrefix?: string;
+  containerPattern?: RegExp;
+  nestedOnly?: boolean;
+  customHeaders?: Record<string, string>;
+}
+
+/** Shared OPDS navigation discovery used by CWA shelves and BookOrbit SmartScopes. */
+export const discoverOPDSShelvesAt = async (
+  rootUrl: string,
+  username: string,
+  password: string,
+  options: OPDSShelfDiscoveryOptions = {},
+): Promise<CWAShelfCandidate[]> => {
+  if (!rootUrl) return [];
+  const root = await fetchCWAFeed(rootUrl, username, password, options.customHeaders);
+  if (!root) return [];
+
+  const idPrefix = options.idPrefix ?? 'opds-discovered';
+  const candidates = new Map<string, CWAShelfCandidate>();
+  const rootNavigation = root.feed.navigation ?? [];
+  if (!options.nestedOnly) {
+    for (const item of rootNavigation) {
+      if (isShelfLike(item)) addCandidate(candidates, item, root.baseURL, idPrefix);
+    }
+  }
+
+  const containers = rootNavigation
+    .filter((item) =>
+      options.containerPattern
+        ? !!item.href && options.containerPattern.test(`${item.title ?? ''} ${item.href}`)
+        : isShelfContainer(item),
+    )
+    .slice(0, 8);
+  for (const container of containers) {
+    const feedUrl = resolveURL(container.href!, root.baseURL);
+    const nested = await fetchCWAFeed(feedUrl, username, password, options.customHeaders);
+    if (!nested) continue;
+    for (const item of nested.feed.navigation ?? []) {
+      if (!isStructuralNavigation(item) && item.href) {
+        addCandidate(candidates, item, nested.baseURL, idPrefix);
+      }
+    }
+  }
+
+  return Array.from(candidates.values()).sort((a, b) => a.name.localeCompare(b.name));
 };
 
 export const discoverCWAShelves = async (
@@ -353,30 +410,9 @@ export const discoverCWAShelves = async (
   const rootUrl = getCWAOPDSUrl(settings);
   if (!rootUrl) return [];
 
-  const username = settings.username || '';
-  const password = settings.password || '';
-  const root = await fetchCWAFeed(rootUrl, username, password);
-  if (!root) return [];
-
-  const candidates = new Map<string, CWAShelfCandidate>();
-  const rootNavigation = root.feed.navigation ?? [];
-  for (const item of rootNavigation) {
-    if (isShelfLike(item)) addCandidate(candidates, item, root.baseURL);
-  }
-
-  const containers = rootNavigation.filter(isShelfContainer).slice(0, 8);
-  for (const container of containers) {
-    const feedUrl = resolveURL(container.href!, root.baseURL);
-    const nested = await fetchCWAFeed(feedUrl, username, password);
-    if (!nested) continue;
-    for (const item of nested.feed.navigation ?? []) {
-      if (isShelfLike(item) || (!isStructuralNavigation(item) && item.href)) {
-        addCandidate(candidates, item, nested.baseURL);
-      }
-    }
-  }
-
-  return Array.from(candidates.values()).sort((a, b) => a.name.localeCompare(b.name));
+  return discoverOPDSShelvesAt(rootUrl, settings.username || '', settings.password || '', {
+    idPrefix: 'cwa-discovered',
+  });
 };
 
 const buildSubscriptionCatalog = (

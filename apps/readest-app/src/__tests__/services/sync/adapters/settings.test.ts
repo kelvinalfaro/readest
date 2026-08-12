@@ -281,6 +281,8 @@ describe('settingsAdapter', () => {
       'bookorbit.userkey',
       'bookorbit.password',
       'bookorbit.customHeaders',
+      'bookorbit.opdsUsername',
+      'bookorbit.opdsPassword',
       'readwise.accessToken',
       'hardcover.accessToken',
       'webdav.username',

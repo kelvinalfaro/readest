@@ -133,6 +133,10 @@ export interface Book {
     /** All known shelf memberships, including the primary legacy fields above. */
     sources?: CWABookSourceRef[];
   };
+  bookorbitSource?: CWABookSourceRef & {
+    /** All known SmartScope memberships for this downloaded book. */
+    sources?: CWABookSourceRef[];
+  };
   // The book carries its own recorded narration (EPUB 3 Media Overlays), so the
   // library can badge it without opening the file. Derived from the file on
   // every import, like `format` — not user data, so it needs no LWW timestamp.

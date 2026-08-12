@@ -92,6 +92,8 @@ export const BACKUP_SETTINGS_CREDENTIAL_FIELDS = [
   'bookorbit.username',
   'bookorbit.userkey',
   'bookorbit.password',
+  'bookorbit.opdsUsername',
+  'bookorbit.opdsPassword',
   'readwise.accessToken',
   'hardcover.accessToken',
   // S3 access keys are strong, long-lived cloud credentials — strip them from

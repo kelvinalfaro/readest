@@ -129,6 +129,12 @@ export interface BookOrbitSettings {
   syncStats: boolean;
   syncBookStates: boolean;
   customHeaders?: Record<string, string>;
+  /** Separate credentials created in BookOrbit under Settings > OPDS. */
+  opdsUsername?: string;
+  opdsPassword?: string;
+  /** SmartScope feeds maintained as bounded local reading queues. */
+  subscriptions?: CWASubscription[];
+  lastLibrarySyncedAt?: number;
 }
 
 export interface ReadwiseSettings {

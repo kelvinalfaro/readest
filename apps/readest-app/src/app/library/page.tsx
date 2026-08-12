@@ -128,6 +128,12 @@ import {
   shouldRunCWAAutoSync,
   syncCWASubscriptions,
 } from '@/services/cwa';
+import {
+  getBookOrbitSettings,
+  hasEnabledBookOrbitSubscriptions,
+  shouldRunBookOrbitAutoSync,
+  syncBookOrbitSubscriptions,
+} from '@/services/bookorbit/librarySubscriptions';
 import ModalPortal from '@/components/ModalPortal';
 import TransferQueuePanel from './components/TransferQueuePanel';
 import CWAStatusBar from './components/CWAStatusBar';
@@ -417,13 +423,58 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     [_, appService, envConfig, setLibrary],
   );
 
+  const syncBookOrbitLibrary = useCallback(
+    async (trigger: 'manual' | 'pull' | 'startup' = 'manual') => {
+      if (!appService) return;
+      const { settings: latestSettings } = useSettingsStore.getState();
+      if (!hasEnabledBookOrbitSubscriptions(latestSettings)) return;
+
+      const currentLibrary = useLibraryStore.getState().library;
+      const result = await syncBookOrbitSubscriptions(appService, latestSettings, currentLibrary, {
+        trigger,
+      });
+      const merged = Array.from(
+        new Map([...currentLibrary, ...result.newBooks].map((book) => [book.hash, book])).values(),
+      );
+      setLibrary(merged);
+      await appService.saveLibraryBooks(merged);
+      const nextSettings = {
+        ...latestSettings,
+        bookorbit: { ...getBookOrbitSettings(latestSettings), lastLibrarySyncedAt: Date.now() },
+      };
+      useSettingsStore.getState().setSettings(nextSettings);
+      await useSettingsStore.getState().saveSettings(envConfig, nextSettings);
+
+      if (trigger !== 'startup' || result.errors.length > 0) {
+        eventDispatcher.dispatch('toast', {
+          type: result.errors.length ? 'warning' : 'info',
+          timeout: 2500,
+          message: result.errors.length
+            ? _('BookOrbit synced with {{count}} catalog error(s)', {
+                count: result.errors.length,
+              })
+            : _('BookOrbit sync complete: {{count}} new item(s)', {
+                count: result.totalNewBooks,
+              }),
+        });
+      }
+    },
+    [_, appService, envConfig, setLibrary],
+  );
+
   const handlePullToRefreshSync = useCallback(
     async (full: boolean) => {
       const latestSettings = useSettingsStore.getState().settings;
+      let syncedSubscription = false;
       if (hasEnabledCWASubscriptions(latestSettings)) {
         await syncCWALibrary('pull');
-        return;
+        syncedSubscription = true;
       }
+      if (hasEnabledBookOrbitSubscriptions(useSettingsStore.getState().settings)) {
+        await syncBookOrbitLibrary('pull');
+        syncedSubscription = true;
+      }
+      if (syncedSubscription) return;
 
       if (!user) {
         navigateToLogin(router);
@@ -432,7 +483,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       await pullLibrary(full, true);
       checkOPDSSubscriptions(true);
     },
-    [checkOPDSSubscriptions, pullLibrary, router, syncCWALibrary, user],
+    [checkOPDSSubscriptions, pullLibrary, router, syncBookOrbitLibrary, syncCWALibrary, user],
   );
 
   usePullToRefresh(
@@ -451,6 +502,12 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       cancelled = true;
     };
   }, [appService, libraryLoaded, syncCWALibrary]);
+  useEffect(() => {
+    if (!libraryLoaded || !appService) return;
+    const latestSettings = useSettingsStore.getState().settings;
+    if (!hasEnabledBookOrbitSubscriptions(latestSettings)) return;
+    if (shouldRunBookOrbitAutoSync(latestSettings)) void syncBookOrbitLibrary('startup');
+  }, [appService, libraryLoaded, syncBookOrbitLibrary]);
   useShortcuts({
     onToggleFullscreen: async () => {
       if (isTauriAppPlatform()) {
