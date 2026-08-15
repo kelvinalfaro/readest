@@ -75,6 +75,8 @@ export interface OPDSSyncOptions {
   downloadConcurrency?: number;
   delayBetweenDownloadsMs?: number;
   dryRun?: boolean;
+  /** Persist newly imported library rows before their OPDS entries become known. */
+  onBooksImported?: (newBooks: Book[]) => Promise<void>;
   /** Provider-specific ordering applied before filtering and per-catalog limits. */
   sortItems?: (input: {
     items: PendingItem[];

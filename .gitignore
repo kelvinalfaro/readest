@@ -57,3 +57,6 @@ result*
 
 fastlane/staging/
 fastlane/metadata-play/android/en-US/changelogs
+
+apps/readest.koplugin/bin/
+apps/readest.koplugin/native/localsend-bin/target/

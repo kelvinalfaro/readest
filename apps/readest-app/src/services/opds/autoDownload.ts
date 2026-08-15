@@ -318,6 +318,16 @@ async function syncCatalog(
     }
   }
 
+  // Persist the imported books BEFORE recording their entries as known: an
+  // entry in knownEntryIds is never downloaded again, so a kill between the
+  // two writes would otherwise lose the library rows for good while the
+  // marker survives (#5658). In the reverse order a kill merely costs a
+  // redundant re-download — imports are idempotent. A failed persist throws
+  // out of the catalog run, leaving the entries unknown for the next sync.
+  if (newBooks.length > 0) {
+    await options.onBooksImported?.(newBooks);
+  }
+
   state.knownEntryIds = pruneKnownEntryIds([...state.knownEntryIds, ...newKnownIds]);
   state.failedEntries = updatedFailedEntries;
   stats.failed = updatedFailedEntries.length;
