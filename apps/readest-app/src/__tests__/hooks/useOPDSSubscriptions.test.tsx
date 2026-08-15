@@ -77,11 +77,11 @@ describe('useOPDSSubscriptions', () => {
     useLibraryStore.getState().setLibrary([]);
     // Subsequent checks find nothing new (the entry is in knownEntryIds).
     mockedSync.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
-    mockedSync.mockImplementationOnce(async (_catalogs, _appService, _books, onBooksImported) => {
+    mockedSync.mockImplementationOnce(async (_catalogs, _appService, _books, options) => {
       const book = makeBook('new-book', { downloadedAt: Date.now() });
       // The real service persists the imported books (via the callback)
       // before recording their entries in knownEntryIds.
-      await onBooksImported?.([book]);
+      await options?.onBooksImported?.([book]);
       return { newBooks: [book], totalNewBooks: 1, errors: [] };
     });
 
@@ -105,12 +105,12 @@ describe('useOPDSSubscriptions', () => {
 
     // Subsequent checks find nothing new (the entry is in knownEntryIds).
     mockedSync.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
-    mockedSync.mockImplementationOnce(async (_catalogs, _appService, books, onBooksImported) => {
+    mockedSync.mockImplementationOnce(async (_catalogs, _appService, books, options) => {
       const row = books.find((b) => b.hash === 'dead-book')!;
       row.deletedAt = null;
       row.updatedAt = Date.now();
       row.downloadedAt = Date.now();
-      await onBooksImported?.([row]);
+      await options?.onBooksImported?.([row]);
       return { newBooks: [row], totalNewBooks: 1, errors: [] };
     });
 

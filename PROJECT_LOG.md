@@ -5,8 +5,9 @@
 - Restored `getUserProfilePlan()` to JWT-based plan resolution, including the existing purchased-storage fallback to the Lifetime (`purchase`) plan; removed the private always-Pro override.
 - Hardened BookOrbit SmartScope downloads by checking each OPDS candidate against the authenticated BookOrbit catalog detail API, always excluding `read` and `skimmed`, and ranking eligible candidates by publication date/year before the feed's added-date order.
 - Added a CWA Disconnect action that clears only the CWA server, credentials, and subscriptions while preserving local library books and other integrations.
-- Validation: 51 focused access, CWA, BookOrbit, proxy, and OPDS auto-download tests passed; TypeScript/Biome lint passed across 2,043 files; the optimized Tauri frontend production build passed. Live BookOrbit account behavior and packaged Android UI remain to be smoke-tested before release.
-- No commit, push, release, updater publication, or device deployment was performed.
+- Merged the current `upstream/main` (33 incoming commits), preserving the private CWA, BookOrbit, Android TV, and LocalSend integrations, and advanced the app version to `0.12.12` for a signed Android release.
+- Validation after the merge: 53 focused access/CWA/BookOrbit/OPDS tests passed, 127 combined feature and Android/TV tests passed, the OPDS persistence hook tests passed, TypeScript/Biome lint passed across 2,055 files, and the optimized Tauri frontend production build passed.
+- The GitHub release workflow will publish signed arm64 phone and armv7 Android TV APKs plus shared `latest.json`; live BookOrbit behavior and packaged Android UI remain device smoke-test items.
 
 ## 2026-08-12 — BookOrbit SmartScope download queues
 
