@@ -8,6 +8,7 @@ import { getAPIBaseUrl, isTauriAppPlatform } from '../environment';
 import { formatKoDatetime } from './noteMapping';
 import type {
   BookOrbitVersionInfo,
+  BookOrbitCatalogBookDetail,
   BookStateEntry,
   BookmarkAckBook,
   BookmarkExchangeBookRequest,
@@ -163,6 +164,13 @@ export class BookOrbitClient {
       this.versionInfo = await this.requestJson<BookOrbitVersionInfo>('/plugin/version');
     }
     return this.versionInfo;
+  }
+
+  async getCatalogBookDetail(bookId: number): Promise<BookOrbitCatalogBookDetail> {
+    if (!Number.isSafeInteger(bookId) || bookId <= 0) {
+      throw new Error('BookOrbit book ID must be a positive integer');
+    }
+    return await this.requestJson<BookOrbitCatalogBookDetail>(`/plugin/catalog/books/${bookId}`);
   }
 
   async matchCheck(books: MatchCheckBook[]): Promise<MatchCheckResponse> {

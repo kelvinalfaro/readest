@@ -202,6 +202,14 @@ async function syncCatalog(
     allItems = allItems.filter((item) => allowed.has(item.entryId));
   }
 
+  if (options.sortItems) {
+    allItems = await options.sortItems({
+      items: allItems,
+      catalogId: catalog.id,
+      catalogName: catalog.name,
+    });
+  }
+
   if (options.shouldSkipItem) {
     const filteredItems: PendingItem[] = [];
     for (const item of allItems) {

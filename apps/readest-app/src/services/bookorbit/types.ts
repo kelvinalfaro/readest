@@ -165,6 +165,13 @@ export interface BookOrbitVersionInfo {
   capabilities: string[];
 }
 
+export interface BookOrbitCatalogBookDetail {
+  id: number;
+  readStatus: string | null;
+  publishedDate: string | null;
+  publishedYear: number | null;
+}
+
 export interface MatchCheckBook {
   hash: string;
   title?: string;

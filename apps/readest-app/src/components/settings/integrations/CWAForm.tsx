@@ -13,6 +13,7 @@ import {
   getCWAKOSyncUrl,
   getCWAOPDSUrl,
   getCWASettings,
+  getDisconnectedCWASettings,
   normalizeCWABaseUrl,
   resetCWASyncHistory,
   resetCWASubscriptionHistory,
@@ -47,6 +48,12 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
   const [newSubUrl, setNewSubUrl] = useState('');
   const normalizedServerUrl = normalizeCWABaseUrl(serverUrl);
   const hasServerUrl = !!normalizedServerUrl;
+  const hasSavedConnection = !!(
+    cwa.serverUrl ||
+    cwa.username ||
+    cwa.password ||
+    cwa.subscriptions.length
+  );
 
   const persistCWA = async (patch: Partial<CWASettings>) => {
     const latest = useSettingsStore.getState().settings;
@@ -236,6 +243,19 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
       timeout: 2000,
       message: _('Shelf sync history reset'),
     });
+  };
+
+  const handleDisconnect = async () => {
+    const latest = useSettingsStore.getState().settings;
+    const next = getDisconnectedCWASettings(latest);
+    setSettings(next);
+    await saveSettings(envConfig, next);
+    setServerUrl('');
+    setUsername('');
+    setPassword('');
+    setDiscoveredShelves([]);
+    setSelectedShelfUrl('');
+    eventDispatcher.dispatch('toast', { type: 'info', message: _('Disconnected') });
   };
 
   return (
@@ -491,6 +511,18 @@ const CWAForm: React.FC<CWAFormProps> = ({ onBack }) => {
           <li>{_('CWA uses OPDS for library discovery and KOSync for reading progress.')}</li>
           <li>{_('Cleanup removes only Readest local copies; books stay untouched in CWA.')}</li>
         </Tips>
+
+        {hasSavedConnection && (
+          <div className='flex justify-end'>
+            <button
+              type='button'
+              className='btn btn-ghost btn-sm text-error'
+              onClick={handleDisconnect}
+            >
+              {_('Disconnect')}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

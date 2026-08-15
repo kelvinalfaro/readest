@@ -75,6 +75,12 @@ export interface OPDSSyncOptions {
   downloadConcurrency?: number;
   delayBetweenDownloadsMs?: number;
   dryRun?: boolean;
+  /** Provider-specific ordering applied before filtering and per-catalog limits. */
+  sortItems?: (input: {
+    items: PendingItem[];
+    catalogId: string;
+    catalogName: string;
+  }) => PendingItem[] | Promise<PendingItem[]>;
   shouldSkipItem?: (input: {
     item: PendingItem;
     catalogId: string;

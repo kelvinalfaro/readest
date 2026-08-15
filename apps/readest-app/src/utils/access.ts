@@ -18,10 +18,16 @@ export const getSubscriptionPlan = (token: string): UserPlan => {
   return data['plan'] || 'free';
 };
 
-// Temporary fork override: preserve the token-shaped API while plan decoding is
-// intentionally bypassed. Revisit this separately from local-device feature gates.
-export const getUserProfilePlan = (_token: string): UserPlan => {
-  return 'pro';
+export const getUserProfilePlan = (token: string): UserPlan => {
+  const data = jwtDecode<Token>(token) || {};
+  let plan = data['plan'] || 'free';
+  if (plan === 'free') {
+    const purchasedQuota = data['storage_purchased_bytes'] || 0;
+    if (purchasedQuota > 0) {
+      plan = 'purchase';
+    }
+  }
+  return plan;
 };
 
 /**

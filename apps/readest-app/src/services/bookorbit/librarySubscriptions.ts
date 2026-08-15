@@ -19,7 +19,10 @@ import type {
 } from '@/services/cwa';
 import { syncSubscribedCatalogs } from '@/services/opds';
 import type { OPDSCatalogSyncStats } from '@/services/opds';
+import type { PendingItem } from '@/services/opds/types';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
+import { BookOrbitClient } from './BookOrbitClient';
+import type { BookOrbitCatalogBookDetail } from './types';
 
 const trimTrailingSlashes = (value: string): string => value.trim().replace(/\/+$/, '');
 
@@ -117,6 +120,31 @@ const buildCatalog = (
 const sourceKey = (source: Pick<CWABookSourceRef, 'subscriptionId' | 'entryId' | 'sourceUrl'>) =>
   `${source.subscriptionId}|${source.entryId ?? ''}|${source.sourceUrl ?? ''}`;
 
+const BOOKORBIT_DETAIL_CONCURRENCY = 6;
+const BOOKORBIT_ENTRY_ID_RE = /^urn:bookorbit:book:(\d+)$/i;
+
+const getBookOrbitEntryBookId = (item: PendingItem): number | null => {
+  const match = BOOKORBIT_ENTRY_ID_RE.exec(item.entryId);
+  if (match?.[1]) return Number(match[1]);
+  const downloadMatch = /\/opds\/(\d+)\/download(?:[/?#]|$)/i.exec(item.acquisitionHref);
+  return downloadMatch?.[1] ? Number(downloadMatch[1]) : null;
+};
+
+const getPublicationTimestamp = (
+  item: PendingItem,
+  detail: BookOrbitCatalogBookDetail,
+): number | null => {
+  const published = detail.publishedDate || item.metadata?.published;
+  if (published) {
+    const timestamp = Date.parse(published);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  if (detail.publishedYear && detail.publishedYear >= 1000 && detail.publishedYear <= 9999) {
+    return Date.UTC(detail.publishedYear, 0, 1);
+  }
+  return null;
+};
+
 const runSync = async (
   appService: AppService,
   settings: SystemSettings,
@@ -135,6 +163,16 @@ const runSync = async (
     (subscription) => subscription.enabled && (!selectedIds || selectedIds.has(subscription.id)),
   );
   const reports = new Map<string, CWASubscriptionReport>();
+  const bookorbitClient = new BookOrbitClient(bookorbit);
+  const detailByBookId = new Map<number, Promise<BookOrbitCatalogBookDetail>>();
+  const getBookDetail = (bookId: number) => {
+    let detail = detailByBookId.get(bookId);
+    if (!detail) {
+      detail = bookorbitClient.getCatalogBookDetail(bookId);
+      detailByBookId.set(bookId, detail);
+    }
+    return detail;
+  };
   const catalogs: OPDSCatalog[] = [];
   const byCatalogId = new Map<string, CWASubscription>();
   const limitByCatalogId: Record<string, number> = {};
@@ -201,10 +239,50 @@ const runSync = async (
     downloadConcurrency: CWA_DOWNLOAD_CONCURRENCY,
     delayBetweenDownloadsMs: CWA_DOWNLOAD_DELAY_MS,
     dryRun: options.dryRun,
-    shouldSkipItem: ({ item, catalogId, sourceUrl }) => {
+    sortItems: async ({ items }) => {
+      const itemBookIds = items.map((item) => {
+        const bookId = getBookOrbitEntryBookId(item);
+        if (!bookId) {
+          throw new Error(`BookOrbit returned an unrecognized OPDS entry ID: ${item.entryId}`);
+        }
+        return { item, bookId };
+      });
+      let nextIndex = 0;
+      await Promise.all(
+        Array.from(
+          { length: Math.min(BOOKORBIT_DETAIL_CONCURRENCY, itemBookIds.length) },
+          async () => {
+            while (nextIndex < itemBookIds.length) {
+              const current = itemBookIds[nextIndex++];
+              if (current) await getBookDetail(current.bookId);
+            }
+          },
+        ),
+      );
+      const indexed = await Promise.all(
+        itemBookIds.map(async ({ item, bookId }, index) => ({
+          item,
+          index,
+          publishedAt: getPublicationTimestamp(item, await getBookDetail(bookId)),
+        })),
+      );
+      indexed.sort((a, b) => {
+        if (a.publishedAt === null && b.publishedAt === null) return a.index - b.index;
+        if (a.publishedAt === null) return 1;
+        if (b.publishedAt === null) return -1;
+        return b.publishedAt - a.publishedAt || a.index - b.index;
+      });
+      return indexed.map(({ item }) => item);
+    },
+    shouldSkipItem: async ({ item, catalogId, sourceUrl }) => {
       const subscription = byCatalogId.get(catalogId);
       if (!subscription) return false;
-      if (subscription.excludeServerRead !== false && item.serverReadStatus === 'read') {
+      const bookId = getBookOrbitEntryBookId(item);
+      if (!bookId) {
+        throw new Error(`BookOrbit returned an unrecognized OPDS entry ID: ${item.entryId}`);
+      }
+      const detail = await getBookDetail(bookId);
+      if (detail.readStatus === 'read' || detail.readStatus === 'skimmed') {
         const report = reports.get(subscription.id);
         if (report) report.skippedServerRead += 1;
         return true;

@@ -1,5 +1,13 @@
 # Project Log
 
+## 2026-08-15 — Lifetime plan restoration and library integration controls
+
+- Restored `getUserProfilePlan()` to JWT-based plan resolution, including the existing purchased-storage fallback to the Lifetime (`purchase`) plan; removed the private always-Pro override.
+- Hardened BookOrbit SmartScope downloads by checking each OPDS candidate against the authenticated BookOrbit catalog detail API, always excluding `read` and `skimmed`, and ranking eligible candidates by publication date/year before the feed's added-date order.
+- Added a CWA Disconnect action that clears only the CWA server, credentials, and subscriptions while preserving local library books and other integrations.
+- Validation: 51 focused access, CWA, BookOrbit, proxy, and OPDS auto-download tests passed; TypeScript/Biome lint passed across 2,043 files; the optimized Tauri frontend production build passed. Live BookOrbit account behavior and packaged Android UI remain to be smoke-tested before release.
+- No commit, push, release, updater publication, or device deployment was performed.
+
 ## 2026-08-12 — BookOrbit SmartScope download queues
 
 - Extended the existing BookOrbit integration with separate OPDS credentials and SmartScope discovery.

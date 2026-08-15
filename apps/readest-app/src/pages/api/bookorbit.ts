@@ -11,6 +11,7 @@ const validEndpoints = [
   /^\/plugin\/bookmarks\/exchange(-ack)?$/,
   /^\/plugin\/page-stats$/,
   /^\/plugin\/book-states$/,
+  /^\/plugin\/catalog\/books\/\d+$/,
 ];
 
 export const isValidBookOrbitEndpoint = (endpoint: string): boolean =>

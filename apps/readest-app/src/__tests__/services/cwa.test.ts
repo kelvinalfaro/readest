@@ -14,6 +14,7 @@ import {
   getCWAKOSyncUrl,
   getCWAOPDSUrl,
   getCWASettings,
+  getDisconnectedCWASettings,
   hasEnabledCWASubscriptions,
   normalizeCWABaseUrl,
   recordFinishedCWAReadSuppressions,
@@ -130,6 +131,22 @@ describe('CWA URL helpers', () => {
     expect(getCWAKOSyncUrl({ serverUrl: 'https://cwa.example/books/kosync' })).toBe(
       'https://cwa.example/books/kosync',
     );
+  });
+});
+
+describe('CWA disconnect', () => {
+  it('clears only the CWA connection and subscriptions', () => {
+    const settings = makeSettings();
+    const disconnected = getDisconnectedCWASettings(settings);
+
+    expect(disconnected.cwa).toEqual({
+      enabled: false,
+      serverUrl: '',
+      username: '',
+      password: '',
+      subscriptions: [],
+    });
+    expect(disconnected.bookorbit).toBe(settings.bookorbit);
   });
 });
 

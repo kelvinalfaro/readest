@@ -15,7 +15,11 @@ const fetchWithAuth = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/opds', () => ({ syncSubscribedCatalogs }));
 vi.mock('@/app/opds/utils/opdsReq', () => ({ fetchWithAuth }));
-vi.mock('@/services/environment', () => ({ isWebAppPlatform: () => false }));
+vi.mock('@/services/environment', () => ({
+  getAPIBaseUrl: () => 'https://web.readest.com/api',
+  isTauriAppPlatform: () => false,
+  isWebAppPlatform: () => false,
+}));
 
 const makeSettings = (): SystemSettings =>
   ({
@@ -172,5 +176,63 @@ describe('BookOrbit bounded subscriptions', () => {
     await syncBookOrbitSubscriptions(appService, makeSettings(), ready);
 
     expect(syncSubscribedCatalogs).toHaveBeenCalledWith([], appService, ready, expect.any(Object));
+  });
+
+  it('excludes read and skimmed books and prioritizes publication date over feed order', async () => {
+    const details = new Map<number, Record<string, unknown>>([
+      [1, { id: 1, readStatus: null, publishedDate: '2019-01-01', publishedYear: 2019 }],
+      [2, { id: 2, readStatus: 'skimmed', publishedDate: '2026-01-01', publishedYear: 2026 }],
+      [3, { id: 3, readStatus: 'reading', publishedDate: '2024-05-01', publishedYear: 2024 }],
+      [4, { id: 4, readStatus: 'read', publishedDate: '2025-01-01', publishedYear: 2025 }],
+      [5, { id: 5, readStatus: 'abandoned', publishedDate: null, publishedYear: 2022 }],
+    ]);
+    const settings = makeSettings();
+    settings.bookorbit.subscriptions![0]!.excludeServerRead = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const payload = JSON.parse(String(init.body)) as { endpoint: string };
+        const id = Number(payload.endpoint.split('/').at(-1));
+        return {
+          ok: true,
+          status: 200,
+          json: async () => details.get(id),
+        };
+      }),
+    );
+    const eligibleEntryIds: string[] = [];
+    syncSubscribedCatalogs.mockImplementationOnce(async (_catalogs, _service, _books, options) => {
+      const items = [1, 2, 3, 4, 5].map((id) => ({
+        entryId: `urn:bookorbit:book:${id}`,
+        title: `Book ${id}`,
+        acquisitionHref: `/api/v1/opds/${id}/download`,
+        mimeType: 'application/epub+zip',
+        baseURL: 'https://books.example.com/api/v1/opds/catalog?smartScopeId=1',
+      }));
+      const sorted = await options.sortItems({
+        items,
+        catalogId: 'bookorbit-sub-scope-1',
+        catalogName: 'Unread Gems',
+      });
+      for (const item of sorted) {
+        const skip = await options.shouldSkipItem({
+          item,
+          catalogId: 'bookorbit-sub-scope-1',
+          catalogName: 'Unread Gems',
+          sourceUrl: item.acquisitionHref,
+        });
+        if (!skip) eligibleEntryIds.push(item.entryId);
+      }
+      return { newBooks: [], totalNewBooks: 0, errors: [] };
+    });
+
+    await syncBookOrbitSubscriptions(appService, settings, []);
+
+    expect(eligibleEntryIds).toEqual([
+      'urn:bookorbit:book:3',
+      'urn:bookorbit:book:5',
+      'urn:bookorbit:book:1',
+    ]);
+    vi.unstubAllGlobals();
   });
 });

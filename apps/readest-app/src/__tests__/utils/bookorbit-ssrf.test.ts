@@ -19,6 +19,7 @@ describe('bookorbit proxy endpoint whitelist', () => {
       '/plugin/bookmarks/exchange-ack',
       '/plugin/page-stats',
       '/plugin/book-states',
+      '/plugin/catalog/books/42',
     ]) {
       expect(isValidBookOrbitEndpoint(endpoint)).toBe(true);
     }
@@ -32,6 +33,8 @@ describe('bookorbit proxy endpoint whitelist', () => {
       'plugin/version',
       '/plugin/package',
       '/plugin/catalog/root',
+      '/plugin/catalog/books/42/thumbnail',
+      '/plugin/catalog/books/not-a-number',
       '/syncs/progress',
       '',
     ]) {

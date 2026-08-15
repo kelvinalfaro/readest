@@ -135,6 +135,11 @@ export const getCWASettings = (settings: SystemSettings): CWASettings => ({
   ),
 });
 
+export const getDisconnectedCWASettings = (settings: SystemSettings): SystemSettings => ({
+  ...settings,
+  cwa: { ...DEFAULT_CWA_SETTINGS },
+});
+
 export const isCWAConfigured = (settings: SystemSettings): boolean => {
   const cwa = getCWASettings(settings);
   return cwa.enabled && !!normalizeCWABaseUrl(cwa.serverUrl);

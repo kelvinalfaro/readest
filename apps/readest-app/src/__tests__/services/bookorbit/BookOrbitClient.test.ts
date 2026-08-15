@@ -107,6 +107,22 @@ describe('BookOrbitClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('loads catalog detail used to gate and prioritize SmartScope downloads', async () => {
+    const detail = {
+      id: 42,
+      readStatus: 'skimmed',
+      publishedDate: '2025-04-03',
+      publishedYear: 2025,
+    };
+    const fetchMock = setFetch(async () => jsonResponse(200, detail));
+    const client = new BookOrbitClient(makeConfig());
+
+    await expect(client.getCatalogBookDetail(42)).resolves.toEqual(detail);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'http://192.168.1.50:3000/api/v1/koreader/plugin/catalog/books/42',
+    );
+  });
+
   it('sends configured custom headers on requests', async () => {
     const fetchMock = setFetch(async () => jsonResponse(200, { results: [], unmatched: [] }));
     const client = new BookOrbitClient(
