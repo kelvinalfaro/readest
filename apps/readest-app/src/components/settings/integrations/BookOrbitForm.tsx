@@ -290,8 +290,9 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
         type: result.errors.length ? 'warning' : 'info',
         message: result.errors.length
           ? _('BookOrbit synced with {{count}} catalog error(s)', { count: result.errors.length })
-          : _('BookOrbit sync complete: {{count}} new item(s)', {
-              count: result.totalNewBooks,
+          : _('BookOrbit sync complete: {{downloaded}} new, {{cleaned}} finished removed', {
+              downloaded: result.totalNewBooks,
+              cleaned: result.cleanedBooks.length,
             }),
       });
     } finally {

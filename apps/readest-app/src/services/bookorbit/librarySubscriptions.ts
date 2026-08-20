@@ -1,4 +1,4 @@
-import type { Book, CWABookSourceRef } from '@/types/book';
+import type { Book, BookNote, CWABookSourceRef } from '@/types/book';
 import type { AppService } from '@/types/system';
 import type { BookOrbitSettings, CWASubscription, SystemSettings } from '@/types/settings';
 import type { OPDSCatalog } from '@/types/opds';
@@ -22,6 +22,8 @@ import type { OPDSCatalogSyncStats } from '@/services/opds';
 import type { PendingItem } from '@/services/opds/types';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
 import { BookOrbitClient } from './BookOrbitClient';
+import { BookOrbitSyncStore } from './BookOrbitSyncStore';
+import { formatKoDate } from './noteMapping';
 import type { BookOrbitCatalogBookDetail } from './types';
 
 const trimTrailingSlashes = (value: string): string => value.trim().replace(/\/+$/, '');
@@ -145,6 +147,81 @@ const getPublicationTimestamp = (
   return null;
 };
 
+const latestNoteChange = (notes: BookNote[]): number =>
+  notes.reduce(
+    (latest, note) => Math.max(latest, note.createdAt, note.updatedAt, note.deletedAt ?? 0),
+    0,
+  );
+
+const areBookOrbitNotesSynced = async (
+  store: BookOrbitSyncStore,
+  book: Book,
+  notes: BookNote[],
+): Promise<boolean> => {
+  for (const kind of ['annotation', 'bookmark'] as const) {
+    const matching = notes.filter((note) => note.type === kind);
+    if (matching.length === 0) continue;
+    if (matching.some((note) => !note.deletedAt && !note.xpointer0)) return false;
+    const watermark = await store.getWatermark(
+      book.hash,
+      kind === 'annotation' ? 'annotations' : 'bookmarks',
+    );
+    if (watermark < latestNoteChange(matching)) return false;
+  }
+  return true;
+};
+
+/**
+ * Remove finished BookOrbit downloads only after their local highlights and
+ * bookmarks are known to have completed a BookOrbit exchange. The finished
+ * state is pushed in the same operation before any local file is removed, so
+ * the server suppresses the title from unread SmartScope queues.
+ */
+export const cleanupFinishedBookOrbitBooks = async (
+  appService: AppService,
+  settings: SystemSettings,
+  books: Book[],
+): Promise<Book[]> => {
+  const bookorbit = getBookOrbitSettings(settings);
+  if (!bookorbit.syncBookStates) return [];
+
+  const store = new BookOrbitSyncStore(appService);
+  const ready: Book[] = [];
+  for (const book of books) {
+    if (book.deletedAt || book.readingStatus !== 'finished' || !book.bookorbitSource) continue;
+    const config = await appService.loadBookConfig(book, settings);
+    const notes = config.booknotes ?? [];
+    if (notes.length > 0 && !bookorbit.syncNotes) continue;
+    if (!(await areBookOrbitNotesSynced(store, book, notes))) continue;
+    ready.push(book);
+  }
+  if (ready.length === 0) return [];
+
+  try {
+    await new BookOrbitClient(bookorbit).uploadBookStates(
+      ready.map((book) => ({
+        hash: book.hash,
+        status: 'complete',
+        statusModified: formatKoDate(book.readingStatusUpdatedAt ?? Date.now()),
+      })),
+    );
+  } catch (error) {
+    console.warn('[BookOrbit] finished-book state push failed; keeping local downloads', error);
+    return [];
+  }
+
+  const cleaned: Book[] = [];
+  for (const book of ready) {
+    await appService.deleteBook(book, 'local');
+    book.deletedAt = Date.now();
+    book.updatedAt = Date.now();
+    book.downloadedAt = null;
+    book.coverDownloadedAt = null;
+    cleaned.push(book);
+  }
+  return cleaned;
+};
+
 const runSync = async (
   appService: AppService,
   settings: SystemSettings,
@@ -162,6 +239,9 @@ const runSync = async (
   const enabled = bookorbit.subscriptions.filter(
     (subscription) => subscription.enabled && (!selectedIds || selectedIds.has(subscription.id)),
   );
+  const cleanedBooks = options.dryRun
+    ? []
+    : await cleanupFinishedBookOrbitBooks(appService, settings, books);
   const reports = new Map<string, CWASubscriptionReport>();
   const bookorbitClient = new BookOrbitClient(bookorbit);
   const detailByBookId = new Map<number, Promise<BookOrbitCatalogBookDetail>>();
@@ -340,10 +420,10 @@ const runSync = async (
           ? 'partial'
           : 'failed',
     totalDownloaded: result.totalNewBooks,
-    totalCleaned: 0,
+    totalCleaned: cleanedBooks.length,
     subscriptions,
   };
-  return { ...result, cleanedBooks: [], report };
+  return { ...result, cleanedBooks, report };
 };
 
 let activeSync: ReturnType<typeof runSync> | null = null;

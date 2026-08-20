@@ -3,6 +3,7 @@ import type { Book } from '@/types/book';
 import type { AppService } from '@/types/system';
 import type { SystemSettings } from '@/types/settings';
 import {
+  cleanupFinishedBookOrbitBooks,
   discoverBookOrbitSmartScopes,
   getBookOrbitOPDSUrl,
   hasEnabledBookOrbitSubscriptions,
@@ -12,9 +13,15 @@ import { CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC, CWA_DEFAULT_QUEUE_TARGET } from '@/
 
 const syncSubscribedCatalogs = vi.hoisted(() => vi.fn());
 const fetchWithAuth = vi.hoisted(() => vi.fn());
+const getWatermark = vi.hoisted(() => vi.fn());
 
 vi.mock('@/services/opds', () => ({ syncSubscribedCatalogs }));
 vi.mock('@/app/opds/utils/opdsReq', () => ({ fetchWithAuth }));
+vi.mock('@/services/bookorbit/BookOrbitSyncStore', () => ({
+  BookOrbitSyncStore: class {
+    getWatermark = getWatermark;
+  },
+}));
 vi.mock('@/services/environment', () => ({
   getAPIBaseUrl: () => 'https://web.readest.com/api',
   isTauriAppPlatform: () => false,
@@ -72,6 +79,7 @@ const appService = {
 beforeEach(() => {
   fetchWithAuth.mockReset();
   syncSubscribedCatalogs.mockReset();
+  getWatermark.mockReset();
   syncSubscribedCatalogs.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
 });
 
@@ -112,6 +120,134 @@ describe('BookOrbit SmartScope discovery', () => {
 });
 
 describe('BookOrbit bounded subscriptions', () => {
+  it('pushes finished state and deletes a finished download after its notes are synced', async () => {
+    const finished = makeBook({
+      hash: 'finished',
+      readingStatus: 'finished',
+      readingStatusUpdatedAt: 80,
+      bookorbitSource: {
+        subscriptionId: 'scope-1',
+        subscriptionName: 'Unread Gems',
+        catalogId: 'bookorbit-sub-scope-1',
+        entryId: 'urn:bookorbit:book:7',
+        sourceUrl: 'https://books.example.com/api/v1/opds/7/download',
+        downloadedAt: 1,
+      },
+    });
+    getWatermark.mockResolvedValue(100);
+    const deleteBook = vi.fn(async () => {});
+    let requestInit: RequestInit | undefined;
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestInit = init;
+      return { ok: true, status: 200, json: async () => ({}) };
+    });
+    vi.stubGlobal('fetch', fetch);
+    const service = {
+      isBookAvailable: vi.fn(async () => true),
+      loadBookConfig: vi.fn(async () => ({
+        updatedAt: 50,
+        booknotes: [
+          {
+            id: 'note-1',
+            type: 'annotation' as const,
+            cfi: '/6/2',
+            xpointer0: '/body/DocFragment[1]',
+            text: 'Highlight',
+            note: 'Note',
+            createdAt: 40,
+            updatedAt: 50,
+          },
+        ],
+      })),
+      deleteBook,
+    } as unknown as AppService;
+
+    const cleaned = await cleanupFinishedBookOrbitBooks(service, makeSettings(), [finished]);
+
+    expect(cleaned).toEqual([finished]);
+    expect(fetch).toHaveBeenCalledOnce();
+    const request = JSON.parse(String(requestInit?.body)) as {
+      endpoint: string;
+      body: { books: Array<{ hash: string; status: string }> };
+    };
+    expect(request.endpoint).toBe('/plugin/book-states');
+    expect(request.body.books).toEqual([
+      { hash: 'finished', status: 'complete', statusModified: '1970-01-01' },
+    ]);
+    expect(deleteBook).toHaveBeenCalledWith(finished, 'local');
+    expect(finished.deletedAt).toBeTypeOf('number');
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps a finished download until its latest annotation is confirmed synced', async () => {
+    const finished = makeBook({
+      hash: 'finished',
+      readingStatus: 'finished',
+      bookorbitSource: {
+        subscriptionId: 'scope-1',
+        subscriptionName: 'Unread Gems',
+        catalogId: 'bookorbit-sub-scope-1',
+        sourceUrl: 'https://books.example.com/api/v1/opds/7/download',
+        downloadedAt: 1,
+      },
+    });
+    getWatermark.mockResolvedValue(49);
+    const deleteBook = vi.fn(async () => {});
+    const service = {
+      loadBookConfig: vi.fn(async () => ({
+        updatedAt: 50,
+        booknotes: [
+          {
+            id: 'note-1',
+            type: 'annotation' as const,
+            cfi: '/6/2',
+            xpointer0: '/body/DocFragment[1]',
+            text: 'Highlight',
+            note: 'Unsynced note',
+            createdAt: 40,
+            updatedAt: 50,
+          },
+        ],
+      })),
+      deleteBook,
+    } as unknown as AppService;
+
+    const cleaned = await cleanupFinishedBookOrbitBooks(service, makeSettings(), [finished]);
+
+    expect(cleaned).toEqual([]);
+    expect(deleteBook).not.toHaveBeenCalled();
+  });
+
+  it('keeps a finished download when the finished-state push fails', async () => {
+    const finished = makeBook({
+      hash: 'finished',
+      readingStatus: 'finished',
+      bookorbitSource: {
+        subscriptionId: 'scope-1',
+        subscriptionName: 'Unread Gems',
+        catalogId: 'bookorbit-sub-scope-1',
+        sourceUrl: 'https://books.example.com/api/v1/opds/7/download',
+        downloadedAt: 1,
+      },
+    });
+    const deleteBook = vi.fn(async () => {});
+    const service = {
+      loadBookConfig: vi.fn(async () => ({ updatedAt: 50, booknotes: [] })),
+      deleteBook,
+    } as unknown as AppService;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: false, status: 503, text: async () => 'Unavailable' })),
+    );
+
+    const cleaned = await cleanupFinishedBookOrbitBooks(service, makeSettings(), [finished]);
+
+    expect(cleaned).toEqual([]);
+    expect(deleteBook).not.toHaveBeenCalled();
+    expect(finished.deletedAt).toBeUndefined();
+    vi.unstubAllGlobals();
+  });
+
   it('requires OPDS credentials and an enabled SmartScope', () => {
     expect(hasEnabledBookOrbitSubscriptions(makeSettings())).toBe(true);
     const settings = makeSettings();
