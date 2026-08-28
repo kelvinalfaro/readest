@@ -15,7 +15,7 @@ import {
   saveSubscriptionState,
   pruneKnownEntryIds,
 } from './subscriptionState';
-import { upsertOPDSSourceMapping } from './sourceMap';
+import { findBookByOPDSSources, upsertOPDSSourceMapping } from './sourceMap';
 import { isRetryEligible, getNextRetryAt, DOWNLOAD_CONCURRENCY, MAX_RETRY_ATTEMPTS } from './types';
 import type {
   PendingItem,
@@ -40,6 +40,21 @@ async function downloadAndImport(
   books: Book[],
 ): Promise<Book> {
   const url = resolveURL(item.acquisitionHref, item.baseURL);
+  // CWA/Calibre can repackage the same title and change its bytes (and hash)
+  // without changing the OPDS source. Reuse the existing live book so a later
+  // sync cannot strand progress or create a duplicate after a cleanup pass.
+  const catalogIds = [...new Set([catalog.contentId, catalog.id].filter(Boolean) as string[])];
+  for (const catalogId of catalogIds) {
+    const existing = await findBookByOPDSSources(appService, {
+      catalogId,
+      sourceUrls: [url],
+      library: books,
+    });
+    if (existing) {
+      console.log(`[OPDS] "${item.title}" already imported for this source — skipping re-download`);
+      return existing;
+    }
+  }
   const username = catalog.username ?? '';
   const password = catalog.password ?? '';
   const customHeaders = normalizeCustomHeaders(catalog.customHeaders);

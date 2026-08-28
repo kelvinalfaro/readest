@@ -220,6 +220,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
   libraryAutoColumns: true,
   libraryColumns: 6,
   librarySkeuomorphicCovers: false,
+  libraryHideCovers: false,
   libraryRecentShelfEnabled: false,
 
   metadataSeriesCollapsed: false,
@@ -261,6 +262,7 @@ export const DEFAULT_SYSTEM_SETTINGS: Partial<SystemSettings> = {
     font: true,
     texture: true,
     opds_catalog: true,
+    abs_server: true,
     settings: true,
   },
 };
@@ -1068,6 +1070,7 @@ export const TRANSLATED_LANGS = {
   ro: 'Română',
   hu: 'Magyar',
   uz: 'Oʻzbek',
+  ka: 'ქართული',
 };
 
 export const TRANSLATOR_LANGS: Record<string, string> = {

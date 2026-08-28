@@ -3,6 +3,8 @@ import { CustomFont } from '@/styles/fonts';
 import { CustomTexture } from '@/styles/textures';
 import { HighlightColor, HighlightStyle, UserHighlightColor, ViewSettings } from './book';
 import { OPDSCatalog } from './opds';
+import { WebSource } from './webSource';
+import { ABSServer } from './audiobookshelf';
 import type { AISettings } from '@/services/ai/types';
 import type { NotebookTab } from '@/store/notebookStore';
 import type { DictionarySettings, ImportedDictionary } from '@/services/dictionaries/types';
@@ -352,6 +354,7 @@ export type SyncCategory =
   | 'font'
   | 'texture'
   | 'opds_catalog'
+  | 'abs_server'
   | 'settings'
   | 'credentials'
   | 'stats';
@@ -364,6 +367,7 @@ export const SYNC_CATEGORIES: readonly SyncCategory[] = [
   'font',
   'texture',
   'opds_catalog',
+  'abs_server',
   'settings',
   'stats',
   'credentials',
@@ -471,6 +475,12 @@ export interface SystemSettings {
   libraryAutoColumns: boolean;
   libraryColumns: number;
   librarySkeuomorphicCovers: boolean;
+  /**
+   * When true, the library hides real cover images and shows a plain
+   * title/author panel instead. Privacy escape hatch for when the shelf is
+   * visible to others.
+   */
+  libraryHideCovers: boolean;
   /** Show the recently-read carousel at the top of the library (issue #3797). */
   libraryRecentShelfEnabled: boolean;
   /**
@@ -490,6 +500,9 @@ export interface SystemSettings {
   customDictionaries: ImportedDictionary[];
   dictionarySettings: DictionarySettings;
   opdsCatalogs: OPDSCatalog[];
+  absServers: ABSServer[];
+  /** Saved sites for the "From Web Browser" import (#5775). Device-local. */
+  webSources?: WebSource[];
   metadataSeriesCollapsed: boolean;
   metadataOthersCollapsed: boolean;
   metadataDescriptionCollapsed: boolean;
