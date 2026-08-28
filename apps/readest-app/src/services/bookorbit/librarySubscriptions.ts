@@ -189,6 +189,19 @@ export const cleanupFinishedBookOrbitBooks = async (
   const ready: Book[] = [];
   for (const book of books) {
     if (book.deletedAt || book.readingStatus !== 'finished' || !book.bookorbitSource) continue;
+    const subscriptions = new Map(
+      bookorbit.subscriptions.map((subscription) => [subscription.id, subscription]),
+    );
+    const sourceSubscriptions = getBookOrbitBookSources(book)
+      .map((source) => subscriptions.get(source.subscriptionId))
+      .filter((subscription): subscription is CWASubscription => !!subscription);
+    if (
+      sourceSubscriptions.length === 0 ||
+      sourceSubscriptions.length !== getBookOrbitBookSources(book).length ||
+      sourceSubscriptions.some((subscription) => subscription.cleanupPolicy !== 'finished')
+    ) {
+      continue;
+    }
     const config = await appService.loadBookConfig(book, settings);
     const notes = config.booknotes ?? [];
     if (notes.length > 0 && !bookorbit.syncNotes) continue;

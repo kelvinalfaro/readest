@@ -53,7 +53,7 @@ const makeSettings = (): SystemSettings =>
           queueTarget: CWA_DEFAULT_QUEUE_TARGET,
           maxDownloadsPerSync: CWA_DEFAULT_MAX_DOWNLOADS_PER_SYNC,
           formatPreference: ['epub', 'kepub', 'pdf'],
-          cleanupPolicy: 'never',
+          cleanupPolicy: 'finished',
           excludeServerRead: true,
         },
       ],
