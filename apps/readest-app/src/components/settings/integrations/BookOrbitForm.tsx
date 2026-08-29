@@ -509,6 +509,21 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
                     />
                   </label>
                 </div>
+                <label className='form-control'>
+                  <span className='label-text text-xs'>{_('Cleanup')}</span>
+                  <select
+                    className='select select-bordered select-sm'
+                    value={subscription.cleanupPolicy ?? 'never'}
+                    onChange={(event) =>
+                      updateScope(subscription.id, {
+                        cleanupPolicy: event.target.value as CWASubscription['cleanupPolicy'],
+                      })
+                    }
+                  >
+                    <option value='never'>{_('Never remove local copy')}</option>
+                    <option value='finished'>{_('Remove when finished')}</option>
+                  </select>
+                </label>
                 <div className='flex justify-end gap-2'>
                   <button
                     type='button'
