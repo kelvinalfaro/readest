@@ -10,6 +10,8 @@ Historical entries below preserve the status reported at the time; later entries
 - Added compatibility for legacy BookOrbit downloads whose `bookorbit-sub-…` source marker remains in the generic CWA source field. Focused BookOrbit validation passes 10 tests; targeted Biome, TypeScript, and diff checks pass.
 - Merged upstream `main` at `ad9e5c1b8`, including library/reader theme separation, settings-scope labeling, and the iOS web-browser deadlock fix; the merge completed without conflicts and preserved the CWA fork and `0.12.15` version.
 - Post-merge validation passed: 41 focused BookOrbit/theme tests, targeted Biome checks, TypeScript, diff checks, and the optimized Tauri frontend production build. The signed GitHub Android workflow remains the native packaging gate.
+- Pushed release source commit `9b09b0b63` and completed signed dual-APK workflow run `33277688969`. Release `cwa-android-v0.12.15-21` is GitHub's latest release; its verified `latest.json` points to the phone arm64 and Android TV armv7 assets.
+- Downloaded the published phone asset, verified SHA-256 `29369227acb9cfaf2de030dca8a7d1f98a7a3132dc6c5def14bf9e545c5e2cb4`, and installed it in place over wireless ADB. The Pixel 10 Pro Fold reports `versionCode=12015` and `versionName=0.12.15`; app data was preserved. The temporary downloaded APK was removed after installation.
 
 ## 2026-08-28 — APK build repair
 
