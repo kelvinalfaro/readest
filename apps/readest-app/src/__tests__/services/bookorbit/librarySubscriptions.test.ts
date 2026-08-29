@@ -218,6 +218,36 @@ describe('BookOrbit bounded subscriptions', () => {
     expect(deleteBook).not.toHaveBeenCalled();
   });
 
+  it('resolves legacy source ids through the stable catalog id', async () => {
+    const finished = makeBook({
+      hash: 'legacy-finished',
+      readingStatus: 'finished',
+      bookorbitSource: {
+        subscriptionId: 'old-scope-id',
+        subscriptionName: 'Unread Gems',
+        catalogId: 'bookorbit-sub-scope-1',
+        entryId: 'urn:bookorbit:book:8',
+        sourceUrl: 'https://books.example.com/api/v1/opds/8/download',
+        downloadedAt: 1,
+      },
+    });
+    const deleteBook = vi.fn(async () => {});
+    const service = {
+      loadBookConfig: vi.fn(async () => ({ updatedAt: 50, booknotes: [] })),
+      deleteBook,
+    } as unknown as AppService;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })),
+    );
+
+    const cleaned = await cleanupFinishedBookOrbitBooks(service, makeSettings(), [finished]);
+
+    expect(cleaned).toEqual([finished]);
+    expect(deleteBook).toHaveBeenCalledWith(finished, 'local');
+    vi.unstubAllGlobals();
+  });
+
   it('keeps a finished download when the finished-state push fails', async () => {
     const finished = makeBook({
       hash: 'finished',

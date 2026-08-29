@@ -122,6 +122,28 @@ const buildCatalog = (
 const sourceKey = (source: Pick<CWABookSourceRef, 'subscriptionId' | 'entryId' | 'sourceUrl'>) =>
   `${source.subscriptionId}|${source.entryId ?? ''}|${source.sourceUrl ?? ''}`;
 
+const getBookOrbitSourceSubscriptions = (
+  book: Book,
+  subscriptions: Map<string, CWASubscription>,
+): { sources: CWABookSourceRef[]; sourceSubscriptions: (CWASubscription | undefined)[] } => {
+  const sources = getBookOrbitBookSources(book);
+  const sourceSubscriptions = sources.map((source) => {
+    const byId = subscriptions.get(source.subscriptionId);
+    if (byId) return byId;
+
+    // Books downloaded before the SmartScope settings were stabilized may
+    // carry an older subscription id. The catalog id is derived from the
+    // persisted subscription id and is the stable identity already stored on
+    // those book rows.
+    const catalogPrefix = 'bookorbit-sub-';
+    if (source.catalogId.startsWith(catalogPrefix)) {
+      return subscriptions.get(source.catalogId.slice(catalogPrefix.length));
+    }
+    return undefined;
+  });
+  return { sources, sourceSubscriptions };
+};
+
 const BOOKORBIT_DETAIL_CONCURRENCY = 6;
 const BOOKORBIT_ENTRY_ID_RE = /^urn:bookorbit:book:(\d+)$/i;
 
@@ -186,18 +208,20 @@ export const cleanupFinishedBookOrbitBooks = async (
   if (!bookorbit.syncBookStates) return [];
 
   const store = new BookOrbitSyncStore(appService);
+  const subscriptions = new Map(
+    bookorbit.subscriptions.map((subscription) => [subscription.id, subscription]),
+  );
   const ready: Book[] = [];
   for (const book of books) {
     if (book.deletedAt || book.readingStatus !== 'finished' || !book.bookorbitSource) continue;
-    const subscriptions = new Map(
-      bookorbit.subscriptions.map((subscription) => [subscription.id, subscription]),
+    const { sources, sourceSubscriptions: resolvedSubscriptions } =
+      getBookOrbitSourceSubscriptions(book, subscriptions);
+    const sourceSubscriptions = resolvedSubscriptions.filter(
+      (subscription): subscription is CWASubscription => !!subscription,
     );
-    const sourceSubscriptions = getBookOrbitBookSources(book)
-      .map((source) => subscriptions.get(source.subscriptionId))
-      .filter((subscription): subscription is CWASubscription => !!subscription);
     if (
       sourceSubscriptions.length === 0 ||
-      sourceSubscriptions.length !== getBookOrbitBookSources(book).length ||
+      sourceSubscriptions.length !== sources.length ||
       sourceSubscriptions.some((subscription) => subscription.cleanupPolicy !== 'finished')
     ) {
       continue;
