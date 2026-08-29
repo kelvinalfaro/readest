@@ -8,7 +8,8 @@ Historical entries below preserve the status reported at the time; later entries
 - Identified the remaining defect in the library refresh path: both pull-to-refresh levels awaited Readest cloud sync and launched generic OPDS checks, but neither called the separate BookOrbit SmartScope synchronizer. This explains the one-to-two-second pull refresh and its zero SmartScope activity.
 - Prepared `0.12.15` so both pull gestures await generic OPDS checks and then run BookOrbit SmartScope cleanup/replenishment with trigger `pull`, persist the resulting library and last-sync timestamp, and report downloads, removals, catalog errors, or the exact cleanup eligibility gate.
 - Added compatibility for legacy BookOrbit downloads whose `bookorbit-sub-…` source marker remains in the generic CWA source field. Focused BookOrbit validation passes 10 tests; targeted Biome, TypeScript, and diff checks pass.
-- Fetched upstream `main` at `ad9e5c1b8`; three new commits remain to merge before release (library/reader theme separation, settings-scope labeling, and an iOS web-browser deadlock fix).
+- Merged upstream `main` at `ad9e5c1b8`, including library/reader theme separation, settings-scope labeling, and the iOS web-browser deadlock fix; the merge completed without conflicts and preserved the CWA fork and `0.12.15` version.
+- Post-merge validation passed: 41 focused BookOrbit/theme tests, targeted Biome checks, TypeScript, diff checks, and the optimized Tauri frontend production build. The signed GitHub Android workflow remains the native packaging gate.
 
 ## 2026-08-28 — APK build repair
 
