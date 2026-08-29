@@ -27,12 +27,27 @@ import { formatKoDate } from './noteMapping';
 import type { BookOrbitCatalogBookDetail } from './types';
 
 const trimTrailingSlashes = (value: string): string => value.trim().replace(/\/+$/, '');
+const BOOKORBIT_CATALOG_PREFIX = 'bookorbit-sub-';
 
 export type NormalizedBookOrbitSettings = BookOrbitSettings & {
   opdsUsername: string;
   opdsPassword: string;
   subscriptions: CWASubscription[];
 };
+
+export type BookOrbitCleanupSkipReason =
+  | 'book-state-sync-disabled'
+  | 'unmatched-subscription'
+  | 'cleanup-disabled'
+  | 'notes-sync-disabled'
+  | 'notes-pending'
+  | 'state-push-failed';
+
+export interface BookOrbitCleanupDiagnostic {
+  hash: string;
+  title: string;
+  reason: BookOrbitCleanupSkipReason;
+}
 
 export const getBookOrbitSettings = (settings: SystemSettings): NormalizedBookOrbitSettings => ({
   ...DEFAULT_BOOKORBIT_SETTINGS,
@@ -73,16 +88,21 @@ export const discoverBookOrbitSmartScopes = async (
   );
 
 export const getBookOrbitBookSources = (book: Book): CWABookSourceRef[] => {
-  if (!book.bookorbitSource) return [];
+  const sourceRoot =
+    book.bookorbitSource ??
+    (book.cwaSource?.catalogId.startsWith(BOOKORBIT_CATALOG_PREFIX) ? book.cwaSource : undefined);
+  if (!sourceRoot) return [];
   const primary: CWABookSourceRef = {
-    subscriptionId: book.bookorbitSource.subscriptionId,
-    subscriptionName: book.bookorbitSource.subscriptionName,
-    catalogId: book.bookorbitSource.catalogId,
-    entryId: book.bookorbitSource.entryId,
-    sourceUrl: book.bookorbitSource.sourceUrl,
-    downloadedAt: book.bookorbitSource.downloadedAt,
+    subscriptionId: sourceRoot.subscriptionId,
+    subscriptionName: sourceRoot.subscriptionName,
+    catalogId: sourceRoot.catalogId,
+    entryId: sourceRoot.entryId,
+    sourceUrl: sourceRoot.sourceUrl,
+    downloadedAt: sourceRoot.downloadedAt,
   };
-  const sources = [primary, ...(book.bookorbitSource.sources ?? [])];
+  const sources = [primary, ...(sourceRoot.sources ?? [])].filter(
+    (source) => book.bookorbitSource || source.catalogId.startsWith(BOOKORBIT_CATALOG_PREFIX),
+  );
   const byKey = new Map<string, CWABookSourceRef>();
   for (const source of sources) {
     const key = `${source.subscriptionId}|${source.entryId ?? ''}|${source.sourceUrl ?? ''}`;
@@ -135,9 +155,8 @@ const getBookOrbitSourceSubscriptions = (
     // carry an older subscription id. The catalog id is derived from the
     // persisted subscription id and is the stable identity already stored on
     // those book rows.
-    const catalogPrefix = 'bookorbit-sub-';
-    if (source.catalogId.startsWith(catalogPrefix)) {
-      return subscriptions.get(source.catalogId.slice(catalogPrefix.length));
+    if (source.catalogId.startsWith(BOOKORBIT_CATALOG_PREFIX)) {
+      return subscriptions.get(source.catalogId.slice(BOOKORBIT_CATALOG_PREFIX.length));
     }
     return undefined;
   });
@@ -203,9 +222,26 @@ export const cleanupFinishedBookOrbitBooks = async (
   appService: AppService,
   settings: SystemSettings,
   books: Book[],
+  diagnostics: BookOrbitCleanupDiagnostic[] = [],
 ): Promise<Book[]> => {
   const bookorbit = getBookOrbitSettings(settings);
-  if (!bookorbit.syncBookStates) return [];
+  if (!bookorbit.syncBookStates) {
+    diagnostics.push(
+      ...books
+        .filter(
+          (book) =>
+            !book.deletedAt &&
+            book.readingStatus === 'finished' &&
+            getBookOrbitBookSources(book).length > 0,
+        )
+        .map((book) => ({
+          hash: book.hash,
+          title: book.title,
+          reason: 'book-state-sync-disabled' as const,
+        })),
+    );
+    return [];
+  }
 
   const store = new BookOrbitSyncStore(appService);
   const subscriptions = new Map(
@@ -213,23 +249,33 @@ export const cleanupFinishedBookOrbitBooks = async (
   );
   const ready: Book[] = [];
   for (const book of books) {
-    if (book.deletedAt || book.readingStatus !== 'finished' || !book.bookorbitSource) continue;
-    const { sources, sourceSubscriptions: resolvedSubscriptions } =
-      getBookOrbitSourceSubscriptions(book, subscriptions);
+    if (book.deletedAt || book.readingStatus !== 'finished') continue;
+    const { sources, sourceSubscriptions: resolvedSubscriptions } = getBookOrbitSourceSubscriptions(
+      book,
+      subscriptions,
+    );
+    if (sources.length === 0) continue;
     const sourceSubscriptions = resolvedSubscriptions.filter(
       (subscription): subscription is CWASubscription => !!subscription,
     );
-    if (
-      sourceSubscriptions.length === 0 ||
-      sourceSubscriptions.length !== sources.length ||
-      sourceSubscriptions.some((subscription) => subscription.cleanupPolicy !== 'finished')
-    ) {
+    if (sourceSubscriptions.length === 0 || sourceSubscriptions.length !== sources.length) {
+      diagnostics.push({ hash: book.hash, title: book.title, reason: 'unmatched-subscription' });
+      continue;
+    }
+    if (sourceSubscriptions.some((subscription) => subscription.cleanupPolicy !== 'finished')) {
+      diagnostics.push({ hash: book.hash, title: book.title, reason: 'cleanup-disabled' });
       continue;
     }
     const config = await appService.loadBookConfig(book, settings);
     const notes = config.booknotes ?? [];
-    if (notes.length > 0 && !bookorbit.syncNotes) continue;
-    if (!(await areBookOrbitNotesSynced(store, book, notes))) continue;
+    if (notes.length > 0 && !bookorbit.syncNotes) {
+      diagnostics.push({ hash: book.hash, title: book.title, reason: 'notes-sync-disabled' });
+      continue;
+    }
+    if (!(await areBookOrbitNotesSynced(store, book, notes))) {
+      diagnostics.push({ hash: book.hash, title: book.title, reason: 'notes-pending' });
+      continue;
+    }
     ready.push(book);
   }
   if (ready.length === 0) return [];
@@ -244,6 +290,13 @@ export const cleanupFinishedBookOrbitBooks = async (
     );
   } catch (error) {
     console.warn('[BookOrbit] finished-book state push failed; keeping local downloads', error);
+    diagnostics.push(
+      ...ready.map((book) => ({
+        hash: book.hash,
+        title: book.title,
+        reason: 'state-push-failed' as const,
+      })),
+    );
     return [];
   }
 
@@ -269,16 +322,24 @@ const runSync = async (
   const trigger = options.trigger ?? (options.dryRun ? 'preview' : 'manual');
   const bookorbit = getBookOrbitSettings(settings);
   if (!hasEnabledBookOrbitSubscriptions(settings)) {
-    return { newBooks: [], totalNewBooks: 0, errors: [], cleanedBooks: [], report: null };
+    return {
+      newBooks: [],
+      totalNewBooks: 0,
+      errors: [],
+      cleanedBooks: [],
+      cleanupDiagnostics: [],
+      report: null,
+    };
   }
 
   const selectedIds = options.subscriptionIds ? new Set(options.subscriptionIds) : null;
   const enabled = bookorbit.subscriptions.filter(
     (subscription) => subscription.enabled && (!selectedIds || selectedIds.has(subscription.id)),
   );
+  const cleanupDiagnostics: BookOrbitCleanupDiagnostic[] = [];
   const cleanedBooks = options.dryRun
     ? []
-    : await cleanupFinishedBookOrbitBooks(appService, settings, books);
+    : await cleanupFinishedBookOrbitBooks(appService, settings, books, cleanupDiagnostics);
   const reports = new Map<string, CWASubscriptionReport>();
   const bookorbitClient = new BookOrbitClient(bookorbit);
   const detailByBookId = new Map<number, Promise<BookOrbitCatalogBookDetail>>();
@@ -460,7 +521,7 @@ const runSync = async (
     totalCleaned: cleanedBooks.length,
     subscriptions,
   };
-  return { ...result, cleanedBooks, report };
+  return { ...result, cleanedBooks, cleanupDiagnostics, report };
 };
 
 let activeSync: ReturnType<typeof runSync> | null = null;

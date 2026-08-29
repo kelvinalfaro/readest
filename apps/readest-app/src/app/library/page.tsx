@@ -58,6 +58,11 @@ import { useAutoImportFolders } from './hooks/useAutoImportFolders';
 import { useInboxDrainer } from '@/hooks/useInboxDrainer';
 import { useOPDSSubscriptions } from '@/hooks/useOPDSSubscriptions';
 import { useABSSync } from '@/hooks/useABSSync';
+import {
+  getBookOrbitSettings,
+  hasEnabledBookOrbitSubscriptions,
+  syncBookOrbitSubscriptions,
+} from '@/services/bookorbit/librarySubscriptions';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useTransferStore } from '@/store/transferStore';
 import { useBackgroundTexture } from '@/hooks/useBackgroundTexture';
@@ -392,6 +397,67 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
   useInboxDrainer();
   const { isDragging } = useDragDropImport();
 
+  const syncBookOrbitSmartScopes = useCallback(async () => {
+    if (!appService) return;
+    const latestSettings = useSettingsStore.getState().settings;
+    if (!hasEnabledBookOrbitSubscriptions(latestSettings)) return;
+
+    const library = useLibraryStore.getState().library;
+    const result = await syncBookOrbitSubscriptions(appService, latestSettings, library, {
+      trigger: 'pull',
+    });
+    const merged = Array.from(
+      new Map([...library, ...result.newBooks].map((book) => [book.hash, book])).values(),
+    );
+    useLibraryStore.getState().setLibrary(merged);
+    await appService.saveLibraryBooks(merged);
+
+    const currentSettings = useSettingsStore.getState().settings;
+    const nextSettings = {
+      ...currentSettings,
+      bookorbit: {
+        ...getBookOrbitSettings(currentSettings),
+        lastLibrarySyncedAt: Date.now(),
+      },
+    };
+    useSettingsStore.getState().setSettings(nextSettings);
+    await useSettingsStore.getState().saveSettings(envConfig, nextSettings);
+
+    const firstCleanupSkip = result.cleanupDiagnostics[0];
+    if (result.errors.length > 0) {
+      eventDispatcher.dispatch('toast', {
+        type: 'warning',
+        message: _('BookOrbit synced with {{count}} catalog error(s)', {
+          count: result.errors.length,
+        }),
+      });
+    } else if (firstCleanupSkip) {
+      const reason = {
+        'book-state-sync-disabled': _('book-state sync is disabled'),
+        'unmatched-subscription': _('saved SmartScope no longer matches'),
+        'cleanup-disabled': _('cleanup is disabled for one source scope'),
+        'notes-sync-disabled': _('notes sync is disabled'),
+        'notes-pending': _('annotations or bookmarks are still pending sync'),
+        'state-push-failed': _('BookOrbit rejected the finished-state update'),
+      }[firstCleanupSkip.reason];
+      eventDispatcher.dispatch('toast', {
+        type: 'warning',
+        message: _('BookOrbit cleanup skipped {{title}}: {{reason}}', {
+          title: firstCleanupSkip.title,
+          reason,
+        }),
+      });
+    } else {
+      eventDispatcher.dispatch('toast', {
+        type: 'info',
+        message: _('BookOrbit SmartScopes: {{downloaded}} new, {{cleaned}} finished removed', {
+          downloaded: result.totalNewBooks,
+          cleaned: result.cleanedBooks.length,
+        }),
+      });
+    }
+  }, [_, appService, envConfig]);
+
   usePullToRefresh(
     scrollRef,
     async () => {
@@ -400,7 +466,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         return;
       }
       await pullLibrary(false, true);
-      checkOPDSSubscriptions(true);
+      await checkOPDSSubscriptions(true);
+      await syncBookOrbitSmartScopes();
     },
     async () => {
       if (!user) {
@@ -408,7 +475,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         return;
       }
       await pullLibrary(true, true);
-      checkOPDSSubscriptions(true);
+      await checkOPDSSubscriptions(true);
+      await syncBookOrbitSmartScopes();
     },
   );
   useShortcuts({

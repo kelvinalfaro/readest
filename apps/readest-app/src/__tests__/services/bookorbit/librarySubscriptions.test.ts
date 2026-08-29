@@ -248,6 +248,36 @@ describe('BookOrbit bounded subscriptions', () => {
     vi.unstubAllGlobals();
   });
 
+  it('cleans up legacy BookOrbit downloads stored in the generic CWA source field', async () => {
+    const finished = makeBook({
+      hash: 'legacy-cwa-finished',
+      readingStatus: 'finished',
+      cwaSource: {
+        subscriptionId: 'scope-1',
+        subscriptionName: 'Unread Gems',
+        catalogId: 'bookorbit-sub-scope-1',
+        entryId: 'urn:bookorbit:book:9',
+        sourceUrl: 'https://books.example.com/api/v1/opds/9/download',
+        downloadedAt: 1,
+      },
+    });
+    const deleteBook = vi.fn(async () => {});
+    const service = {
+      loadBookConfig: vi.fn(async () => ({ updatedAt: 50, booknotes: [] })),
+      deleteBook,
+    } as unknown as AppService;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })),
+    );
+
+    const cleaned = await cleanupFinishedBookOrbitBooks(service, makeSettings(), [finished]);
+
+    expect(cleaned).toEqual([finished]);
+    expect(deleteBook).toHaveBeenCalledWith(finished, 'local');
+    vi.unstubAllGlobals();
+  });
+
   it('keeps a finished download when the finished-state push fails', async () => {
     const finished = makeBook({
       hash: 'finished',

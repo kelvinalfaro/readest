@@ -2,6 +2,14 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-08-29 — BookOrbit pull-to-refresh cleanup repair
+
+- Verified on the Pixel 10 Pro Fold that Readest CWA `0.12.14` removes a finished SmartScope title when **Sync Downloads Now** is run inside BookOrbit settings; `Python's Kiss` was removed successfully. This confirms the cleanup policy and BookOrbit finished-state exchange work on-device.
+- Identified the remaining defect in the library refresh path: both pull-to-refresh levels awaited Readest cloud sync and launched generic OPDS checks, but neither called the separate BookOrbit SmartScope synchronizer. This explains the one-to-two-second pull refresh and its zero SmartScope activity.
+- Prepared `0.12.15` so both pull gestures await generic OPDS checks and then run BookOrbit SmartScope cleanup/replenishment with trigger `pull`, persist the resulting library and last-sync timestamp, and report downloads, removals, catalog errors, or the exact cleanup eligibility gate.
+- Added compatibility for legacy BookOrbit downloads whose `bookorbit-sub-…` source marker remains in the generic CWA source field. Focused BookOrbit validation passes 10 tests; targeted Biome, TypeScript, and diff checks pass.
+- Fetched upstream `main` at `ad9e5c1b8`; three new commits remain to merge before release (library/reader theme separation, settings-scope labeling, and an iOS web-browser deadlock fix).
+
 ## 2026-08-28 — APK build repair
 
 - Reconciled the post-upstream merge interfaces for Android TV capability flags, the private web-browser import action, OPDS import callbacks, and the upstream TTS/playback API group.

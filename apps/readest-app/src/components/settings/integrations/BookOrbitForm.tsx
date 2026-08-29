@@ -286,14 +286,30 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
       setLibrary(merged);
       await appService.saveLibraryBooks(merged);
       await persistBookOrbit({ lastLibrarySyncedAt: Date.now() });
+      const firstCleanupSkip = result.cleanupDiagnostics[0];
+      const cleanupReason = firstCleanupSkip
+        ? {
+            'book-state-sync-disabled': _('book-state sync is disabled'),
+            'unmatched-subscription': _('saved SmartScope no longer matches'),
+            'cleanup-disabled': _('cleanup is disabled for one source scope'),
+            'notes-sync-disabled': _('notes sync is disabled'),
+            'notes-pending': _('annotations or bookmarks are still pending sync'),
+            'state-push-failed': _('BookOrbit rejected the finished-state update'),
+          }[firstCleanupSkip.reason]
+        : null;
       eventDispatcher.dispatch('toast', {
-        type: result.errors.length ? 'warning' : 'info',
+        type: result.errors.length || firstCleanupSkip ? 'warning' : 'info',
         message: result.errors.length
           ? _('BookOrbit synced with {{count}} catalog error(s)', { count: result.errors.length })
-          : _('BookOrbit sync complete: {{downloaded}} new, {{cleaned}} finished removed', {
-              downloaded: result.totalNewBooks,
-              cleaned: result.cleanedBooks.length,
-            }),
+          : firstCleanupSkip
+            ? _('BookOrbit cleanup skipped {{title}}: {{reason}}', {
+                title: firstCleanupSkip.title,
+                reason: cleanupReason,
+              })
+            : _('BookOrbit sync complete: {{downloaded}} new, {{cleaned}} finished removed', {
+                downloaded: result.totalNewBooks,
+                cleaned: result.cleanedBooks.length,
+              }),
       });
     } finally {
       setSyncingScopes(false);
