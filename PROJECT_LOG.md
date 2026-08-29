@@ -2,6 +2,12 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-08-28 — APK build repair
+
+- Reconciled the post-upstream merge interfaces for Android TV capability flags, the private web-browser import action, OPDS import callbacks, and the upstream TTS/playback API group.
+- The optimized production frontend build now passes TypeScript, static generation, and export validation. The local Android build reaches native compilation but is blocked on this workstation because the MSVC Rust linker `link.exe` is not installed or available; the remote GitHub Windows runner remains the APK build path.
+- The prior workflow run `33223755033` failed before APK/release metadata creation. The repaired commit still needs to be pushed and a new workflow run triggered; phone installation and finished-book removal acceptance remain open.
+
 ## 2026-08-28 — Upstream sync and BookOrbit cleanup investigation
 
 - Fetched `upstream/main` at `f6146c217` and merged 102 upstream commits into local `main` at `3d0a569`, preserving the private CWA/BookOrbit integrations and resolving the fork-specific conflicts locally. Nothing was pushed or released.

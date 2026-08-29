@@ -14,6 +14,7 @@ export interface ImportMenuProps {
   onImportBooksFromFiles: () => void;
   onImportBooksFromDirectory?: () => void;
   onImportBookFromUrl?: () => void;
+  onImportFromWebBrowser?: () => void;
   onOpenCWALibrary?: () => void;
   onImportBookFromNovelUrl?: () => void;
   onOpenCatalogManager: () => void;
@@ -26,6 +27,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
   onImportBooksFromFiles,
   onImportBooksFromDirectory,
   onImportBookFromUrl,
+  onImportFromWebBrowser,
   onOpenCWALibrary,
   onImportBookFromNovelUrl,
   onOpenCatalogManager,
@@ -46,6 +48,11 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
 
   const handleImportFromUrl = () => {
     onImportBookFromUrl?.();
+    setIsDropdownOpen?.(false);
+  };
+
+  const handleImportFromWebBrowser = () => {
+    onImportFromWebBrowser?.();
     setIsDropdownOpen?.(false);
   };
 
@@ -94,6 +101,13 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
           label={_('From Web URL')}
           Icon={<MdLink className='h-5 w-5' />}
           onClick={handleImportFromUrl}
+        />
+      )}
+      {onImportFromWebBrowser && (
+        <MenuItem
+          label={_('From Web Browser')}
+          Icon={<MdLink className='h-5 w-5' />}
+          onClick={handleImportFromWebBrowser}
         />
       )}
       {onImportBookFromNovelUrl && (

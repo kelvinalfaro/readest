@@ -51,7 +51,7 @@ const getNativeAppService = async () => {
     await service.init();
     nativeAppService = service;
   }
-  return nativeAppService;
+  return nativeAppService!;
 };
 
 let webAppService: AppService | null = null;
@@ -62,7 +62,7 @@ const getWebAppService = async () => {
     await service.init();
     webAppService = service;
   }
-  return webAppService;
+  return webAppService!;
 };
 
 const environmentConfig: EnvConfigType = {

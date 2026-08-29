@@ -2,7 +2,7 @@
 //
 // The lock screen is the primary surface for background TTS: metadata,
 // position state, and transport handlers must keep working after the reader
-// (and its hooks) unmount. This bridge binds to a TTSController directly —
+// (and its hooks) unmount. This bridge binds to a PlaybackSource directly —
 // its listeners ride controller events, not React lifecycles — and is the
 // SOLE owner of media-session handlers from the moment a session starts.
 //
@@ -13,12 +13,12 @@
 
 import { buildTTSMediaMetadata } from '@/utils/ttsMetadata';
 import { fetchImageAsBase64 } from '@/utils/image';
-import { getMediaSession, TauriMediaSession, type MediaSessionState } from '@/libs/mediaSession';
+import { getMediaSession, TauriMediaSession } from '@/libs/mediaSession';
 import { isTauriAppPlatform } from '@/services/environment';
 import { getOSPlatform } from '@/utils/misc';
 import { notifyCarPlayState } from './carPlaySession';
 import { SILENCE_DATA } from './TTSData';
-import type { TTSController } from './TTSController';
+import type { PlaybackSource } from '@/services/playback/playbackSource';
 import type { TTSMark, TTSMediaMetadataMode } from './types';
 
 export interface TTSMediaBridgeMeta {
@@ -27,6 +27,11 @@ export interface TTSMediaBridgeMeta {
   author: string;
   coverImageUrl: string | null;
   metadataMode: TTSMediaMetadataMode;
+  // False when this session's audio plays through a WebView media element, so
+  // the native media session leaves audio focus alone — see
+  // MediaSessionState.ownsAudioFocus. Defaults to true: TTS (WebAudio or the
+  // platform engine) and native narration render outside the WebView.
+  ownsAudioFocus?: boolean;
   // Live section label while the reader is mounted; returns undefined when
   // the supplying hook is dead (headless) — the bridge then keeps the last
   // known label rather than freezing on a stale store read.
@@ -92,17 +97,20 @@ type BridgeMediaSession = TauriMediaSession | MediaSession;
 export class TTSMediaBridge {
   #resolveMediaSession: () => BridgeMediaSession | null;
   #mediaSession: BridgeMediaSession | null = null;
-  #controller: TTSController | null = null;
+  #controller: PlaybackSource | null = null;
   #meta: TTSMediaBridgeMeta | null = null;
   // Cover fetched once per bind as a data URL. iOS navigator.mediaSession only
   // renders lock-screen / CarPlay artwork from a fetchable URL, and the book
   // cover is often a blob/tauri URL the media session can't load; a data URL
   // always resolves. The web path re-sends it on every update (each is a full
-  // replace); the native path pushes it once through #loadArtwork.
+  // replace); the native path pushes it once — see #pushArtwork.
   #coverArtwork = '/icon.png';
-  #lifecycleId = 0;
-  #nativeLifecycle: Promise<void> = Promise.resolve();
-  #latestNativeMetadata: { title: string; artist: string; album: string } | null = null;
+  // Push artwork on the first native metadata write after a bind. Later mark
+  // updates omit it: Swift merges into the existing nowPlayingInfo, so the
+  // cover survives, and re-decoding a multi-MB base64 image per sentence does
+  // not. Sending artwork: '' instead is what used to wipe the cover — empty
+  // string is truthy for the WebKit mirror and non-nil for Swift's optional.
+  #pushArtwork = true;
   #lastSectionLabel: string | undefined;
   #previousSectionLabel: string | undefined;
   #onSpeakMark: ((e: Event) => void) | null = null;
@@ -125,7 +133,7 @@ export class TTSMediaBridge {
     return this.#controller !== null;
   }
 
-  async bind(controller: TTSController, meta: TTSMediaBridgeMeta): Promise<void> {
+  async bind(controller: PlaybackSource, meta: TTSMediaBridgeMeta): Promise<void> {
     if (this.#controller === controller) {
       // Re-bind on adopt: refresh the meta (new bookKey / live label source)
       // without re-registering listeners or re-activating the session.
@@ -133,43 +141,49 @@ export class TTSMediaBridge {
       return;
     }
     this.unbind();
-    const lifecycleId = ++this.#lifecycleId;
     this.#controller = controller;
     this.#meta = meta;
     this.#mediaSession = this.#resolveMediaSession();
     if (!this.#mediaSession) return;
-    // bind() awaits below (setActive), during which a concurrent
+    // bind() awaits below (cover fetch, setActive), during which a concurrent
     // unbind() (e.g. a stop during startup) nulls #mediaSession. Use the
     // captured session for the awaited calls so they can't deref null, then
     // bail before wiring handlers onto a torn-down session (READEST-1A).
     const mediaSession = this.#mediaSession;
 
+    // Fetch the cover once as a data URL, reused by the native session and by
+    // every navigator.mediaSession metadata refresh (see #coverArtwork).
+    try {
+      this.#coverArtwork = await fetchImageAsBase64(meta.coverImageUrl || '/icon.png');
+    } catch {
+      try {
+        this.#coverArtwork = await fetchImageAsBase64('/icon.png');
+      } catch {
+        this.#coverArtwork = '';
+      }
+    }
+    this.#pushArtwork = true;
+
     if (mediaSession instanceof TauriMediaSession) {
-      // Foreground ownership is the startup critical path. Cover conversion is
-      // deliberately deferred: a slow/broken image must never leave Android
-      // treating live speech as an ordinary cached process.
-      await this.#queueNativeLifecycle(mediaSession, {
+      await mediaSession.setActive({
         active: true,
-        foregroundServiceTitle: meta.title,
-        foregroundServiceText: meta.author,
+        ownsAudioFocus: meta.ownsAudioFocus ?? true,
         // bookKey is `${hash}-${uniqueId()}`; the hash alone addresses the book
         // for a readest://book/{hash} resume deep link from the car.
         bookHash: meta.bookKey.split('-')[0],
         bookTitle: meta.title,
         bookAuthor: meta.author,
       });
-      if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
-      this.#latestNativeMetadata = {
+      await mediaSession.updateMetadata({
         title: meta.title,
         artist: meta.author,
         album: meta.title,
-      };
-      // Omit artwork until the asynchronous fetch completes. Sending an empty
-      // artwork string wipes the existing cover in the native iOS session.
-      await mediaSession.updateMetadata(this.#latestNativeMetadata);
+        artwork: this.#coverArtwork,
+      });
+      this.#pushArtwork = false;
     }
 
-    if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
+    if (this.#mediaSession !== mediaSession) return;
 
     this.#registerActionHandlers();
 
@@ -204,14 +218,9 @@ export class TTSMediaBridge {
     };
     controller.addEventListener('tts-speak-mark', this.#onSpeakMark);
     controller.addEventListener('tts-state-change', this.#onStateChange);
-
-    // Artwork is cosmetic and may involve a network/blob fetch plus base64
-    // conversion. Apply it only while this exact binding is still current.
-    void this.#loadArtwork(mediaSession, meta, lifecycleId);
   }
 
   unbind(): void {
-    ++this.#lifecycleId;
     if (this.#controller) {
       if (this.#onSpeakMark) {
         this.#controller.removeEventListener('tts-speak-mark', this.#onSpeakMark);
@@ -241,7 +250,7 @@ export class TTSMediaBridge {
         }
       }
       if (mediaSession instanceof TauriMediaSession) {
-        void this.#queueNativeLifecycle(mediaSession, { active: false });
+        void mediaSession.setActive({ active: false });
       }
     }
     this.#endSkip();
@@ -252,39 +261,7 @@ export class TTSMediaBridge {
     this.#onStateChange = null;
     this.#lastSectionLabel = undefined;
     this.#previousSectionLabel = undefined;
-    this.#latestNativeMetadata = null;
-  }
-
-  #queueNativeLifecycle(mediaSession: TauriMediaSession, state: MediaSessionState): Promise<void> {
-    const operation = this.#nativeLifecycle.then(() => mediaSession.setActive(state));
-    // Keep the queue usable even if a platform implementation rejects.
-    this.#nativeLifecycle = operation.catch(() => {});
-    return operation;
-  }
-
-  async #loadArtwork(
-    mediaSession: BridgeMediaSession,
-    meta: TTSMediaBridgeMeta,
-    lifecycleId: number,
-  ): Promise<void> {
-    let artwork: string;
-    try {
-      artwork = await fetchImageAsBase64(meta.coverImageUrl || '/icon.png');
-    } catch {
-      try {
-        artwork = await fetchImageAsBase64('/icon.png');
-      } catch {
-        artwork = '';
-      }
-    }
-    if (this.#lifecycleId !== lifecycleId || this.#mediaSession !== mediaSession) return;
-    this.#coverArtwork = artwork;
-    if (mediaSession instanceof TauriMediaSession && this.#latestNativeMetadata && artwork) {
-      await mediaSession.updateMetadata({
-        ...this.#latestNativeMetadata,
-        artwork,
-      });
-    }
+    this.#pushArtwork = true;
   }
 
   #registerActionHandlers(): void {
@@ -375,14 +352,24 @@ export class TTSMediaBridge {
     if (!metadata.shouldUpdate) return;
 
     if (mediaSession instanceof TauriMediaSession) {
-      this.#latestNativeMetadata = {
+      // Never send artwork: '' — that wiped the cover on every speak-mark
+      // (empty string is truthy for the web mirror and for Swift's optional).
+      // Push the cover once after bind; later updates keep title/artist only.
+      const payload: {
+        title: string;
+        artist: string;
+        album: string;
+        artwork?: string;
+      } = {
         title: metadata.title,
         artist: metadata.artist,
         album: metadata.album,
       };
-      // Native implementations merge metadata fields; omit artwork so a
-      // sentence/chapter update preserves the cover loaded for this binding.
-      await mediaSession.updateMetadata(this.#latestNativeMetadata);
+      if (this.#pushArtwork && this.#coverArtwork) {
+        payload.artwork = this.#coverArtwork;
+        this.#pushArtwork = false;
+      }
+      await mediaSession.updateMetadata(payload);
     } else {
       // Declare the artwork's REAL mime type: fetchImageAsBase64 emits a JPEG
       // data URL by default, and WebKit silently drops mediaSession artwork

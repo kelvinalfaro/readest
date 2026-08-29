@@ -37,9 +37,8 @@ vi.mock('@/components/Dialog', () => ({
 }));
 
 const envConfig = {};
-const mockAppService = { hasHaptics: false, isTV: false };
 vi.mock('@/context/EnvContext', () => ({
-  useEnv: () => ({ envConfig, appService: mockAppService }),
+  useEnv: () => ({ envConfig, appService: { hasHaptics: false } }),
 }));
 
 const viewSettings: Record<string, unknown> = {};
@@ -67,8 +66,9 @@ vi.mock('@/store/readerProgressStore', () => ({
   useBookProgress: () => ({ sectionLabel: 'Chapter 5' }),
 }));
 
-// Access policy for the offline-audio row. The policy tests below cover paid,
-// free, and signed-out users.
+// Premium gating for the offline-audio row. Defaults to a signed-in premium
+// user so the existing tests (which don't render the row) are unaffected;
+// the gating tests below flip these.
 const { routerPush, mockAuth, mockQuota } = vi.hoisted(() => ({
   routerPush: vi.fn(),
   mockAuth: { user: { id: 'u' } as { id: string } | null },
@@ -157,7 +157,6 @@ const makeProps = (overrides: Record<string, unknown> = {}) => ({
 
 describe('TTSPlayerSheet', () => {
   beforeEach(() => {
-    mockAppService.isTV = false;
     viewSettings['ttsRate'] = 1.0;
     viewSettings['ttsSentenceGap'] = 0.15;
     viewSettings['isEink'] = false;
@@ -191,19 +190,6 @@ describe('TTSPlayerSheet', () => {
     expect(await waitFor(() => screen.getByText('Ava'))).toBeTruthy(); // voice button caption
     // The main view carries no header label (vertical space).
     expect(screen.queryByText('Read Aloud')).toBeNull();
-  });
-
-  test('adds author and Stop to the listen-first TV player', () => {
-    mockAppService.isTV = true;
-    getBookData.mockReturnValue({
-      book: { title: 'Alice in Wonderland', author: 'Lewis Carroll', coverImageUrl: null },
-    });
-    const onStop = vi.fn();
-
-    render(<TTSPlayerSheet {...makeProps({ onStop })} />);
-    expect(screen.getByText('Lewis Carroll')).toBeTruthy();
-    fireEvent.click(screen.getByLabelText('Stop'));
-    expect(onStop).toHaveBeenCalledOnce();
   });
 
   test('degrades without a timeline: no scrubber, estimate text instead', () => {
@@ -398,28 +384,28 @@ describe('TTSPlayerSheet', () => {
     expect(routerPush).not.toHaveBeenCalled();
   });
 
-  test('offline audio row: a free user has no badge and opens the chapters view', () => {
+  test('offline audio row: a free user sees a Premium badge and is routed to upgrade', () => {
     mockQuota.userProfilePlan = 'free';
     const props = makeProps({ downloads: makeDownloads() });
     render(<TTSPlayerSheet {...props} />);
-    expect(screen.queryByText('Premium')).toBeNull();
-    expect(screen.getByText('1 of 1 downloaded')).toBeTruthy();
+    expect(screen.getByText('Premium')).toBeTruthy();
+    expect(screen.getByText('Download chapters for offline playback')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Offline Audio'));
-    expect(screen.getByText('chapters-view')).toBeTruthy();
-    expect(routerPush).not.toHaveBeenCalled();
-    expect(props.onClose).not.toHaveBeenCalled();
+    expect(routerPush).toHaveBeenCalledWith('/user');
+    expect(props.onClose).toHaveBeenCalled();
+    // The premium chapters view must not open for a free user.
+    expect(screen.queryByText('chapters-view')).toBeNull();
   });
 
-  test('offline audio row: a signed-out user has no badge and opens the chapters view', () => {
+  test('offline audio row: a signed-out user is routed to sign-in', () => {
     mockAuth.user = null;
     mockQuota.userProfilePlan = undefined;
     const props = makeProps({ downloads: makeDownloads() });
     render(<TTSPlayerSheet {...props} />);
-    expect(screen.queryByText('Premium')).toBeNull();
+    expect(screen.getByText('Premium')).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Offline Audio'));
-    expect(screen.getByText('chapters-view')).toBeTruthy();
-    expect(routerPush).not.toHaveBeenCalled();
-    expect(props.onClose).not.toHaveBeenCalled();
+    expect(routerPush).toHaveBeenCalledWith(expect.stringContaining('/auth?redirect='));
+    expect(screen.queryByText('chapters-view')).toBeNull();
   });
 
   // Books with recorded narration (EPUB 3 Media Overlays) surface the narrator

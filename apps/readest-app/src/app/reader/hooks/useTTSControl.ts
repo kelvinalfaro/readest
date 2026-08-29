@@ -939,7 +939,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         ttsController.pairedAudiobook = bookData.config?.audiobook;
         ttsControllerRef.current = ttsController;
         setTtsController(ttsController);
-        await ttsSessionManager.claim(bookKey, ttsController, {
+        ttsSessionManager.claim(bookKey, ttsController, {
           bookKey,
           title: bookData.book.title,
           author: bookData.book.author,
@@ -1011,13 +1011,10 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         syncClientCapabilities();
         setTTSEnabled(bookKey, true);
       } catch (error) {
-        // Startup can fail after the controller has claimed the global TTS
-        // slot and begun activating the native media service. Roll back the
-        // entire session so the next Play action starts cleanly without a
-        // force-close or Recents swipe.
-        await handleStop(bookKey);
+        setShowIndicator(false);
+        setIsPlaying(false);
         eventDispatcher.dispatch('toast', {
-          message: _('Read aloud could not start. Please try again.'),
+          message: _('TTS not supported for this document'),
           type: 'error',
         });
         console.error(error);

@@ -141,8 +141,8 @@ describe('useOPDSSubscriptions', () => {
       useLibraryStore.getState().setLibrary([]);
       const book = makeBook('sub-book');
       mockedSync.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
-      mockedSync.mockImplementationOnce(async (_c, _a, _b, onBooksImported) => {
-        await onBooksImported?.([book]);
+      mockedSync.mockImplementationOnce(async (_c, _a, _b, options) => {
+        await options?.onBooksImported?.([book]);
         return { newBooks: [book], totalNewBooks: 1, errors: [] };
       });
 
@@ -171,8 +171,8 @@ describe('useOPDSSubscriptions', () => {
       useLibraryStore.getState().setLibrary([]);
       const book = makeBook('sub-book');
       mockedSync.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
-      mockedSync.mockImplementationOnce(async (_c, _a, _b, onBooksImported) => {
-        await onBooksImported?.([book]);
+      mockedSync.mockImplementationOnce(async (_c, _a, _b, options) => {
+        await options?.onBooksImported?.([book]);
         return { newBooks: [book], totalNewBooks: 1, errors: [] };
       });
 
