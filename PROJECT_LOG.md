@@ -7,6 +7,7 @@ Historical entries below preserve the status reported at the time; later entries
 - Reconciled the post-upstream merge interfaces for Android TV capability flags, the private web-browser import action, OPDS import callbacks, and the upstream TTS/playback API group.
 - The optimized production frontend build now passes TypeScript, static generation, and export validation. The local Android build reaches native compilation but is blocked on this workstation because the MSVC Rust linker `link.exe` is not installed or available; the remote GitHub Windows runner remains the APK build path.
 - The prior workflow run `33223755033` failed before APK/release metadata creation. The repaired commit still needs to be pushed and a new workflow run triggered; phone installation and finished-book removal acceptance remain open.
+- After 0.12.13 was installed, finished SmartScope books still remained. Added legacy source resolution through the stable `bookorbit-sub-…` catalog id, then prepared patch release 0.12.14; the focused test runner remains blocked by a pre-existing missing Supabase base64 environment variable, while TypeScript passes.
 
 ## 2026-08-28 — Upstream sync and BookOrbit cleanup investigation
 
