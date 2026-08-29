@@ -2,6 +2,14 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-08-28 — Upstream sync and BookOrbit cleanup investigation
+
+- Fetched `upstream/main` at `f6146c217` and merged 102 upstream commits into local `main` at `3d0a569`, preserving the private CWA/BookOrbit integrations and resolving the fork-specific conflicts locally. Nothing was pushed or released.
+- Carried forward upstream OPDS source-identity protection so a CWA/Calibre repackage reuses the existing live book instead of creating a new hash and stranding progress.
+- Corrected BookOrbit finished-book cleanup to honor each SmartScope subscription's explicit `cleanupPolicy`; new subscriptions default to `never`, so removal requires selecting `Remove when finished`. Focused test execution remains pending because the post-merge dependency installation was interrupted while downloading updated upstream packages.
+- Confirmed the BookOrbit form had no visible cleanup control even though it stored `cleanupPolicy: 'never'`; added the per-SmartScope Cleanup selector with `Never remove local copy` and `Remove when finished` options. The connected phone still runs the older `0.12.12` build, so this UI fix is not yet installed on the device.
+- Wireless ADB is connected to the Pixel 10 Pro Fold, but the installed phone build is still `0.12.12`; live sync produced no app-level cleanup event. Destructive finished-book acceptance remains open until the updated APK is installed.
+
 ## 2026-08-20 — Workspace consolidation and BookOrbit queue cleanup
 
 - Established `D:\src\readest-cwa` as the sole project location for editable source, operating guidance, and continuity.
@@ -12,6 +20,8 @@ Historical entries below preserve the status reported at the time; later entries
 - Confirmed SmartScope candidates already rank by publication date descending within the OPDS entries Readest discovers. The bounded crawler currently sees at most five pages per feed; BookOrbit's OPDS feed orders/paginates by added date and does not expose a publication-date sort, so full-catalog publication ordering requires a BookOrbit server enhancement rather than a safe client-only reorder.
 - Updated BookOrbit sync completion messages to report both new downloads and finished removals. Focused BookOrbit tests, full lint/type checking, and the optimized production web build passed; three unrelated full-suite native-service timeout failures passed when rerun in isolation.
 - The attached phone did not enumerate through ADB, so live queue/download validation could not be performed. The default SmartScope queue target remains 10 and the per-sync download cap remains 3; manual BookOrbit downloads count toward the ready queue and can reduce a later automatic pass to one or two downloads.
+- Pushed commit `9091318c`, published signed release `cwa-android-v0.12.12-bookorbit-cleanup-9091318`, and installed the arm64 APK on the Pixel 10 Pro Fold without clearing app data. A destructive acceptance check using a genuinely finished BookOrbit title remains pending.
+- A read-only audit of the live BookOrbit PostgreSQL database reconciled the dashboard's 67 completed 2026 attempt rows against the 64-book `Read 2026` SmartScope. The three dashboard-only completed attempts were `Diary of a Minecraft Zombie Book 11: Insides Out` (attempt 1791, later marked skimmed), `The Social Work Skills Workbook` (attempt 1745, later marked skimmed), and `The Manager’s Guide to Coaching for Change` (BookOrbit attempt 1754; current finished date remains 2022). No duplicate completed attempts existed within the 64 scope books, and no database data was changed.
 
 ## 2026-08-15 — Lifetime plan restoration and library integration controls
 

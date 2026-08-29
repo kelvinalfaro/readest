@@ -46,7 +46,7 @@ type SheetView = 'main' | 'speed' | 'voice' | 'timer' | 'chapters';
 
 export const formatGap = (sec: number) => `${parseFloat(sec.toFixed(2))}s`;
 
-const getTTSTimeoutOptions = (_: TranslationFunc) => {
+export const getTTSTimeoutOptions = (_: TranslationFunc) => {
   return [
     { label: _('No Timeout'), value: 0 },
     { label: _('End of Chapter'), value: TTS_STOP_AT_CHAPTER_END },

@@ -15,9 +15,15 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { eventDispatcher } from '@/utils/event';
 import { releaseUnblockAudio, ttsMediaBridge, TTSMediaBridgeMeta } from './ttsMediaBridge';
+import type { PlaybackSource } from '@/services/playback/playbackSource';
 import type { TTSController } from './TTSController';
 
 export type TTSSessionMeta = TTSMediaBridgeMeta;
+
+// Narrow the shared playback source for TTS-only consumers without importing
+// the concrete controller into every caller's bundle.
+export const asTTSController = (source: PlaybackSource | null | undefined): TTSController | null =>
+  source && source.kind === 'tts' ? (source as TTSController) : null;
 
 // Sentinel passed to setSleepTimer()'s call sites / used as the TTSPlayerSheet
 // timeout option value to mean "stop when the current chapter ends" instead
