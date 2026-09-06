@@ -8,6 +8,7 @@ import {
   RiRssLine,
   RiBookReadLine,
   RiBook3Line,
+  RiFileList3Line,
   RiDiscordLine,
   RiSendPlaneLine,
   RiWifiLine,
@@ -27,11 +28,12 @@ import { useQuotaStats } from '@/hooks/useQuotaStats';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useCustomOPDSStore } from '@/store/customOPDSStore';
 import { useFileSyncStore } from '@/store/fileSyncStore';
+import { useLocalSendStore } from '@/store/localsendStore';
 import { CatalogManager } from '@/app/opds/components/CatalogManager';
 import { saveSysSettings } from '@/helpers/settings';
 import { isCloudSyncAllowed } from '@/utils/access';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
-import { isLocalSendEnabled } from '@/services/localsend/devicePrefs';
+import { getLocalSendAlias, isLocalSendEnabled } from '@/services/localsend/devicePrefs';
 import { getGoogleWebClientId } from '@/services/sync/providers/gdrive/buildGoogleDriveProvider';
 import { getMicrosoftClientId } from '@/services/sync/providers/onedrive/buildOneDriveProvider';
 import { isICloudSupportedPlatform } from '@/services/sync/providers/icloud/buildICloudProvider';
@@ -42,6 +44,7 @@ import KOSyncForm from './integrations/KOSyncForm';
 import CWAForm from './integrations/CWAForm';
 import ReadwiseForm from './integrations/ReadwiseForm';
 import HardcoverForm from './integrations/HardcoverForm';
+import NotionForm from './integrations/NotionForm';
 import SendToReadestForm from './integrations/SendToReadestForm';
 import LocalSendForm from './integrations/LocalSendForm';
 import WebDAVForm from './integrations/WebDAVForm';
@@ -81,6 +84,7 @@ type SubPage =
   | 'readest-cloud'
   | 'readwise'
   | 'hardcover'
+  | 'notion'
   | 'opds'
   | 'send'
   | 'localsend'
@@ -106,6 +110,9 @@ const IntegrationsPanel: React.FC = () => {
   const { settings, requestedSubPage, setRequestedSubPage } = useSettingsStore();
   const opdsCatalogs = useCustomOPDSStore((s) => s.catalogs);
   const opdsCount = opdsCatalogs.filter((c) => !c.deletedAt).length;
+  // The device name Nearby BookDrop announces once its service is running,
+  // so the integrations row can show it in place of a bare "On".
+  const localSendAlias = useLocalSendStore((s) => s.status?.alias);
   // Surface a library-wide WebDAV sync that's mid-flight in the row's
   // status line. Keeps the user from feeling like the run was lost
   // when they back out of the WebDAV sub-page or close the dialog.
@@ -131,8 +138,11 @@ const IntegrationsPanel: React.FC = () => {
   // The build policy decides whether personal third-party storage is plan-gated.
   // This fork keeps it available to every plan while retaining the upstream
   // plan-aware access path.
-  const { userProfilePlan } = useQuotaStats();
-  const isCloudSyncAllowedForPlan = isCloudSyncAllowed(userProfilePlan ?? 'free');
+  const { userProfilePlan, customizationPurchased } = useQuotaStats();
+  const isCloudSyncAllowedForPlan = isCloudSyncAllowed(
+    userProfilePlan ?? 'free',
+    customizationPurchased,
+  );
   // Only surface the tier chip when the active build policy denies access.
   // Suppress it while a signed-in user's plan is still loading.
   const premiumBadge =
@@ -208,6 +218,7 @@ const IntegrationsPanel: React.FC = () => {
       requestedSubPage === 'icloud' ||
       requestedSubPage === 'readwise' ||
       requestedSubPage === 'hardcover' ||
+      requestedSubPage === 'notion' ||
       requestedSubPage === 'opds' ||
       requestedSubPage === 'send' ||
       requestedSubPage === 'localsend'
@@ -442,6 +453,12 @@ const IntegrationsPanel: React.FC = () => {
         <HardcoverForm onBack={() => setSubPage(null)} />
       </div>
     );
+  if (subPage === 'notion')
+    return (
+      <div className='my-4 w-full'>
+        <NotionForm onBack={() => setSubPage(null)} />
+      </div>
+    );
   if (subPage === 'opds')
     return (
       <div className='my-4 w-full'>
@@ -480,6 +497,10 @@ const IntegrationsPanel: React.FC = () => {
 
   const readwiseStatus = settings.readwise?.enabled ? _('Connected') : _('Not connected');
   const hardcoverStatus = settings.hardcover?.enabled ? _('Connected') : _('Not connected');
+  const notionStatus =
+    settings.notion?.enabled && settings.notion.accessToken && settings.notion.databaseId
+      ? _('Connected')
+      : _('Not connected');
 
   // Cloud sync providers are independently selectable (#5062): any subset of
   // {Readest Cloud, WebDAV, Google Drive, S3, OneDrive, iCloud} can sync the
@@ -566,6 +587,11 @@ const IntegrationsPanel: React.FC = () => {
 
   const opdsStatus =
     opdsCount > 0 ? _('{{count}} catalog', { count: opdsCount }) : _('No catalogs');
+  // Enabled rows show the announced device name (falling back to the stored
+  // custom alias, then a bare "On" until the service reports its alias).
+  const localSendStatus = !isLocalSendEnabled()
+    ? _('Off')
+    : localSendAlias || getLocalSendAlias() || _('On');
 
   return (
     <div className='my-4 w-full space-y-6'>
@@ -609,6 +635,12 @@ const IntegrationsPanel: React.FC = () => {
               title={_('Hardcover')}
               status={hardcoverStatus}
               onClick={() => setSubPage('hardcover')}
+            />
+            <IntegrationRow
+              icon={RiFileList3Line}
+              title={_('Notion')}
+              status={notionStatus}
+              onClick={() => setSubPage('notion')}
             />
           </div>
         </div>
@@ -777,8 +809,8 @@ const IntegrationsPanel: React.FC = () => {
             {isTauriAppPlatform() && (
               <IntegrationRow
                 icon={RiWifiLine}
-                title={_('LocalSend')}
-                status={isLocalSendEnabled() ? _('On') : _('Off')}
+                title={_('Nearby BookDrop')}
+                status={localSendStatus}
                 onClick={() => setSubPage('localsend')}
               />
             )}

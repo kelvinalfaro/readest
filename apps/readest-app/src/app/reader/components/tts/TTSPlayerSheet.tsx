@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   MdAlarm,
   MdArrowBackIosNew,
@@ -154,8 +154,8 @@ const TTSPlayerSheet = ({
   // feature: any paid plan can use it; free / signed-out users see the row with
   // a Premium badge that routes to the upgrade page instead of the per-chapter
   // download controls. Mirrors the cloud-sync paywall in IntegrationsPanel.
-  const { userProfilePlan } = useQuotaStats();
-  const isDownloadPremium = isTTSCacheAllowed(userProfilePlan ?? 'free');
+  const { userProfilePlan, customizationPurchased } = useQuotaStats();
+  const isDownloadPremium = isTTSCacheAllowed(userProfilePlan ?? 'free', customizationPurchased);
   // Only badge users who can't use it yet: signed out (known at once), or a
   // resolved plan without the feature. Suppress it while a signed-in user's
   // plan is still loading so it never flashes at an entitled user.
@@ -178,7 +178,23 @@ const TTSPlayerSheet = ({
   const iconSize32 = useResponsiveSize(32);
 
   const book = getBookData(bookKey)?.book;
-  const sectionLabel = progress?.sectionLabel;
+  const sectionLabel = useMemo(() => {
+    if (activeSectionIndex === null || activeSectionIndex < 0) {
+      return progress?.sectionLabel;
+    }
+
+    const chapter = downloads.chapters.find(
+      ({ startSection, endSection }) =>
+        Number.isInteger(startSection) &&
+        Number.isInteger(endSection) &&
+        startSection >= 0 &&
+        endSection > startSection &&
+        activeSectionIndex >= startSection &&
+        activeSectionIndex < endSection,
+    );
+    const chapterLabel = chapter?.label.trim();
+    return chapterLabel || _('Section {{index}}', { index: activeSectionIndex + 1 });
+  }, [_, activeSectionIndex, downloads.chapters, progress?.sectionLabel]);
   const isEink = viewSettings?.isEink ?? false;
   const coverImage = book?.coverImageUrl && !coverFailed ? book.coverImageUrl : null;
 

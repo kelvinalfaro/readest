@@ -18,23 +18,23 @@ const mockBroadcastGlobalSettings = vi.mocked(broadcastGlobalSettings);
 
 describe('isCloudSyncInPlan', () => {
   test('any paid plan can use cloud sync', () => {
-    expect(isCloudSyncInPlan('plus')).toBe(true);
-    expect(isCloudSyncInPlan('pro')).toBe(true);
-    expect(isCloudSyncInPlan('purchase')).toBe(true); // lifetime
+    expect(isCloudSyncInPlan('plus', false)).toBe(true);
+    expect(isCloudSyncInPlan('pro', false)).toBe(true);
+    expect(isCloudSyncInPlan('purchase', false)).toBe(false);
   });
 
   test('free plan cannot', () => {
-    expect(isCloudSyncInPlan('free')).toBe(false);
+    expect(isCloudSyncInPlan('free', false)).toBe(false);
   });
 });
 
 describe('isCloudSyncAllowed (build policy)', () => {
   test('third-party cloud sync is available to every plan in this build', () => {
     expect(CLOUD_SYNC_REQUIRES_PREMIUM).toBe(false);
-    expect(isCloudSyncAllowed('free')).toBe(true);
-    expect(isCloudSyncAllowed('plus')).toBe(true);
-    expect(isCloudSyncAllowed('pro')).toBe(true);
-    expect(isCloudSyncAllowed('purchase')).toBe(true);
+    expect(isCloudSyncAllowed('free', false)).toBe(true);
+    expect(isCloudSyncAllowed('plus', false)).toBe(true);
+    expect(isCloudSyncAllowed('pro', false)).toBe(true);
+    expect(isCloudSyncAllowed('purchase', false)).toBe(true);
   });
 });
 

@@ -24,7 +24,7 @@ jobs:
       # skipPush is a cachix-action input, not an install-nix-action one. The
       # cache is public, so pulling needs no token at all; omitting authToken
       # keeps the push token out of PR-triggered builds entirely.
-      - uses: cachix/cachix-action@f495f3ffa2f3810a92e5cc0abc2c5d6a2a07ec82
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866
         with:
           name: readest
           skipPush: true
@@ -411,10 +411,10 @@ jobs:
         with:
           toolchain: stable
           # This action defaults RUSTFLAGS to -D warnings. Path-patched
-          # dependencies (packages/tao, packages/tauri) build without
-          # cap-lints, so upstream warnings in them (e.g. glib deprecations
-          # in tao's Linux backend) would fail the app build. Warnings in
-          # our own crate are enforced by the rust_lint job instead.
+          # dependencies (packages/tauri, packages/swift-rs) build without
+          # cap-lints, so upstream warnings in them would fail the app
+          # build. Warnings in our own crate are enforced by the rust_lint
+          # job instead.
           rustflags: ''
           # Disable this action's built-in rust-cache so the explicit
           # Swatinem/rust-cache below is the single cache (it's the one
@@ -425,8 +425,8 @@ jobs:
         if: steps.changes.outputs.tauri == 'true'
         with:
           # cache-workspace-crates caches the path/workspace crates too: the
-          # vendored tauri fork (packages/tauri, packages/tauri-plugins, wired
-          # via [patch.crates-io]) and the local src-tauri/plugins/*. These are
+          # vendored tauri fork (packages/tauri, wired via [patch.crates-io])
+          # and the local src-tauri/plugins/*. These are
           # workspace members that rust-cache prunes by default, so the whole
           # tauri stack — plus every crates.io plugin that depends on the
           # patched `tauri` — rebuilt on every run. They change only
