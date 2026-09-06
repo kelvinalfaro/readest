@@ -139,17 +139,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     private fun requestFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
+            val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(SPOKEN_MEDIA_ATTRIBUTES)
                 .setWillPauseWhenDucked(true)
                 .setOnAudioFocusChangeListener(afChangeListener)
                 .build()
-            focusRequest = request
+                .also { focusRequest = it }
             if (audioManager.requestAudioFocus(request) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
                 Log.w("MediaPlaybackService", "Failed to gain audio focus")
             }
@@ -174,6 +169,11 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     }
 
     companion object {
+        val SPOKEN_MEDIA_ATTRIBUTES: AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+
         private const val CHANNEL_ID = "media2_playback_channel"
         private const val NOTIFICATION_ID = 1002
         private const val MEDIA_ROOT_ID = "media_root_id"
@@ -408,6 +408,11 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     private inner class SessionCallback : MediaSessionCompat.Callback() {
         override fun onPlay() {
+            // A route may have changed while paused (Bluetooth headphones to
+            // Android Auto, or the reverse). Re-requesting focus immediately
+            // before playback makes Android bind this session to the current
+            // media route instead of retaining the previous device.
+            if (ownsAudioFocus) requestFocus()
             player.play()
             pluginEventTrigger?.invoke("media-session-play", JSObject())
             updatePlaybackState()
@@ -573,6 +578,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     private fun applyPlaybackState(playing: Boolean) {
         if (!sessionActive) return
         if (playing && !player.isPlaying) {
+            if (ownsAudioFocus) requestFocus()
             player.play()
         } else if (!playing && player.isPlaying) {
             player.pause()

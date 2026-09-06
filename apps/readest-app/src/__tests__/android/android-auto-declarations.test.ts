@@ -25,6 +25,20 @@ const manifest = readFileSync(
   resolve(process.cwd(), 'src-tauri/gen/android/app/src/main/AndroidManifest.xml'),
   'utf-8',
 );
+const mediaPlaybackService = readFileSync(
+  resolve(
+    process.cwd(),
+    'src-tauri/plugins/tauri-plugin-native-tts/android/src/main/java/MediaPlaybackService.kt',
+  ),
+  'utf-8',
+);
+const nativeTTSPlugin = readFileSync(
+  resolve(
+    process.cwd(),
+    'src-tauri/plugins/tauri-plugin-native-tts/android/src/main/java/NativeTTSPlugin.kt',
+  ),
+  'utf-8',
+);
 
 describe('Android Auto declarations (#3919)', () => {
   it('does not opt in to car projection while Android Auto is withdrawn', () => {
@@ -47,5 +61,12 @@ describe('Android Auto declarations (#3919)', () => {
     expect(serviceBlock).toBeDefined();
     expect(serviceBlock).toContain('android.media.browse.MediaBrowserService');
     expect(serviceBlock).toContain('android:exported="true"');
+  });
+
+  it('rebinds resumed speech to the current Android media route', () => {
+    expect(mediaPlaybackService).toContain('if (ownsAudioFocus) requestFocus()');
+    expect(nativeTTSPlugin).toContain(
+      'setAudioAttributes(MediaPlaybackService.SPOKEN_MEDIA_ATTRIBUTES)',
+    );
   });
 });

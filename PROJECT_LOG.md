@@ -2,6 +2,13 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-06 — Upstream sync and Android audio-route resume repair
+
+- Created a recoverable local pre-merge branch and merged `upstream/main` at `b4d80d2b4` into the CWA fork, preserving CWA, BookOrbit SmartScope/OPDS settings, ungated self-built cloud/offline-audio access, and the newer upstream Notion, Nearby BookDrop, backup, and entitlement interfaces. Nothing was pushed or released.
+- Repaired silent Read Aloud resume after moving between phone, Bluetooth headphones, and Android Auto: resumed sessions now re-request audio focus, and native TextToSpeech applies media/speech audio attributes at initialization and before every utterance so Android routes it to the currently selected output.
+- Validation passed 85 of 86 focused Android Auto, access, media-bridge, session-manager, and audiobook tests; the one failure is the pre-existing deferred-cover media-bridge timeout noted below. Full TypeScript checking, Biome lint across 2,373 files, and the optimized Tauri frontend production build passed. Native APK and route-handoff device verification remain required.
+- Two older fork media-lifecycle tests remain incompatible with the merged upstream implementation: the deferred-cover activation case times out and the mocked failed-start cleanup case no longer observes `shutdown`. They fail independently of the Kotlin route change and remain reconciliation work before a full green media suite.
+
 ## 2026-08-29 — BookOrbit pull-to-refresh cleanup repair
 
 - Verified on the Pixel 10 Pro Fold that Readest CWA `0.12.14` removes a finished SmartScope title when **Sync Downloads Now** is run inside BookOrbit settings; `Python's Kiss` was removed successfully. This confirms the cleanup policy and BookOrbit finished-state exchange work on-device.

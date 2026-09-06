@@ -205,6 +205,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             textToSpeech = TextToSpeech(activity, { status ->
                 when (status) {
                     TextToSpeech.SUCCESS -> {
+                        textToSpeech?.setAudioAttributes(MediaPlaybackService.SPOKEN_MEDIA_ATTRIBUTES)
                         setupTTSListener()
                         isInitialized.set(true)
                         @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
@@ -332,6 +333,10 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         withContext(Dispatchers.Main) {
             try {
                 textToSpeech?.apply {
+                    // Re-apply media attributes for every utterance so a
+                    // Bluetooth/Android Auto handoff while paused uses the
+                    // route that is current when playback resumes.
+                    setAudioAttributes(MediaPlaybackService.SPOKEN_MEDIA_ATTRIBUTES)
                     setSpeechRate(currentRate.get())
                     setPitch(currentPitch.get())
                 }
