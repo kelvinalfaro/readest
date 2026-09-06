@@ -189,9 +189,10 @@ export const runFileLibrarySyncPass = async (
             ? {
                 ...result,
                 booksSynced: merged.booksSynced + result.booksSynced,
-                failures: merged.failures + result.failures,
-                failedBooks: [...merged.failedBooks, ...result.failedBooks],
-                indexPushFailed: merged.indexPushFailed || result.indexPushFailed,
+                failures: (merged.failures ?? 0) + (result.failures ?? 0),
+                failedBooks: [...(merged.failedBooks ?? []), ...(result.failedBooks ?? [])],
+                indexPushFailed:
+                  (merged.indexPushFailed ?? false) || (result.indexPushFailed ?? false),
               }
             : result;
         }

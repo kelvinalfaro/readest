@@ -13,6 +13,8 @@ type TTSEventPayload = {
   utteranceId: string;
 } & TTSMessageEvent;
 
+const NATIVE_TTS_INIT_TIMEOUT_MS = 8000;
+
 const TTSEngines = {
   default: 'System TTS',
   msctts: 'Msc TTS',
@@ -93,7 +95,21 @@ export class NativeTTSClient implements TTSClient {
   }
 
   async init(): Promise<boolean> {
-    const result = await invoke<{ success: boolean }>('plugin:native-tts|init');
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<null>((resolve) => {
+      timeoutId = setTimeout(() => resolve(null), NATIVE_TTS_INIT_TIMEOUT_MS);
+    });
+    const result = await Promise.race([
+      invoke<{ success: boolean }>('plugin:native-tts|init'),
+      timeout,
+    ]).finally(() => {
+      if (timeoutId) clearTimeout(timeoutId);
+    });
+    if (!result) {
+      console.warn('Native TTS initialization timed out; continuing with another speech engine.');
+      this.initialized = false;
+      return false;
+    }
     this.initialized = result.success;
     if (this.initialized) {
       this.setupEventListener();

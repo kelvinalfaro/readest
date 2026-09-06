@@ -62,6 +62,8 @@ vi.mock('@/utils/version', async () => {
 });
 
 vi.mock('@/helpers/updater', () => ({
+  getAndroidPlatformKey: (arch: string) =>
+    arch === 'aarch64' ? 'android-arm64' : 'android-universal',
   setLastShownReleaseNotesVersion: vi.fn(),
 }));
 

@@ -1035,10 +1035,12 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
         syncClientCapabilities();
         setTTSEnabled(bookKey, true);
       } catch (error) {
-        setShowIndicator(false);
-        setIsPlaying(false);
+        // Startup can fail after the controller has claimed the global slot
+        // and activated native media. Release the whole session so retrying
+        // Play does not require force-closing the app.
+        await handleStop(bookKey);
         eventDispatcher.dispatch('toast', {
-          message: _('TTS not supported for this document'),
+          message: _('Read aloud could not start. Please try again.'),
           type: 'error',
         });
         console.error(error);

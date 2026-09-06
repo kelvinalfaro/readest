@@ -141,6 +141,7 @@ const selectFileTauri = async (
     (appService?.isAndroidApp &&
       (options.type === 'books' ||
         options.type === 'dictionaries' ||
+        options.type === 'audio' ||
         (options.type === 'generic' && !isZipSelection)));
   const exts = noFilter ? [] : options.extensions || [];
   const title = options.dialogTitle || _('Select Files');
@@ -228,8 +229,8 @@ export const FILE_SELECTION_PRESETS = {
     dialogTitle: _('Select Video'),
   },
   audio: {
-    accept: 'audio/*',
-    extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a'],
+    accept: 'audio/*,.m4b',
+    extensions: ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'm4b'],
     dialogTitle: _('Select Audio'),
   },
   books: {

@@ -446,7 +446,11 @@ describe('useTTSControl startup recovery', () => {
       shutdown: ReturnType<typeof vi.fn>;
     };
     expect(failedController.shutdown).toHaveBeenCalled();
-    expect(mockSessionManager.release).toHaveBeenCalledWith('book');
+    expect(mockSessionManager.stopController).toHaveBeenCalledWith(
+      'book',
+      failedController,
+      'user',
+    );
     expect(unbind).toHaveBeenCalled();
     expect(getSetTTSEnabledMock()).toHaveBeenCalledWith('book-1', false);
     expect(dispatch).toHaveBeenCalledWith('toast', {
