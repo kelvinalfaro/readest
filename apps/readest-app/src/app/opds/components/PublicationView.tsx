@@ -40,13 +40,19 @@ interface PublicationViewProps {
   resolveURL: (url: string, base: string) => string;
   onNavigate: (url: string) => void;
   onDownload: (
-    href: string,
-    type?: string,
+    link: OPDSAcquisitionLink,
     onProgress?: (progress: { progress: number; total: number }) => void,
-  ) => Promise<Book | null | undefined>;
+  ) => Promise<OPDSDownloadResult>;
   onStream?: (href: string, count: number, title: string, author: string) => void;
   onGenerateCachedImageUrl: (url: string, cacheVersion?: string) => Promise<string>;
 }
+
+export type OPDSDownloadResult =
+  | Book
+  | { kind: 'audiobook'; filename: string }
+  | { kind: 'cancelled' }
+  | null
+  | undefined;
 
 export function PublicationView({
   publication,
@@ -128,7 +134,7 @@ export function PublicationView({
     return (linksByRel.get(REL.STREAM) || []) as OPDSStreamLink[];
   }, [linksByRel]);
 
-  const handleActionButton = async (href: string, type?: string, forceDownload = false) => {
+  const handleActionButton = async (link: OPDSAcquisitionLink, forceDownload = false) => {
     if (downloadedBook && !forceDownload) {
       navigateToReader(router, [downloadedBook.hash]);
       return;
@@ -138,14 +144,22 @@ export function PublicationView({
     setProgress(null);
 
     try {
-      const book = await onDownload(href, type, (prog) => {
+      const result = await onDownload(link, (prog) => {
         if (prog.total > 0) {
           const percentage = Math.floor((prog.progress / prog.total) * 100);
           setProgress(percentage);
         }
       });
-      if (book) {
-        setDownloadedBook(book);
+      if (result && 'kind' in result) {
+        if (result.kind === 'cancelled') return;
+        eventDispatcher.dispatch('toast', {
+          type: 'success',
+          message: _('Audiobook downloaded: {{filename}}', { filename: result.filename }),
+        });
+        return;
+      }
+      if (result) {
+        setDownloadedBook(result);
       }
       eventDispatcher.dispatch('toast', { type: 'success', message: _('Download completed') });
     } catch (error) {
@@ -160,7 +174,7 @@ export function PublicationView({
       } else {
         eventDispatcher.dispatch('toast', {
           type: 'error',
-          message: _('Download failed') + `:\n${href}`,
+          message: _('Download failed') + `:\n${link.href ?? ''}`,
         });
       }
     } finally {
@@ -201,7 +215,7 @@ export function PublicationView({
           noIcon
           transient
           label={link.title || getFormatName(link).toUpperCase() || _('Download')}
-          onClick={() => handleActionButton(link.href!, link.type)}
+          onClick={() => handleActionButton(link, !!downloadedBook)}
         />
       ))}
     </div>
@@ -362,7 +376,7 @@ export function PublicationView({
                             re-downloading drops to flat. */}
                         <button
                           type='button'
-                          onClick={() => handleActionButton(preferred.href!, preferred.type)}
+                          onClick={() => handleActionButton(preferred)}
                           disabled={downloading}
                           className={clsx(SOLID_ACTION, 'min-w-20 rounded-3xl px-4')}
                         >
@@ -371,16 +385,14 @@ export function PublicationView({
                         {showCaret ? (
                           splitDownloadButton(
                             _('Download Again'),
-                            () => handleActionButton(preferred.href!, preferred.type, true),
+                            () => handleActionButton(preferred, true),
                             menuLinks,
                             false,
                           )
                         ) : (
                           <button
                             type='button'
-                            onClick={() =>
-                              handleActionButton(preferred.href!, preferred.type, true)
-                            }
+                            onClick={() => handleActionButton(preferred, true)}
                             disabled={downloading}
                             className={clsx(FLAT_ACTION, 'min-w-20 rounded-3xl px-4')}
                           >
@@ -391,7 +403,7 @@ export function PublicationView({
                     ) : !showCaret ? (
                       <button
                         type='button'
-                        onClick={() => handleActionButton(preferred.href!, preferred.type)}
+                        onClick={() => handleActionButton(preferred)}
                         disabled={downloading}
                         className={clsx(SOLID_ACTION, 'min-w-20 rounded-3xl px-4')}
                       >
@@ -400,7 +412,7 @@ export function PublicationView({
                     ) : hasDefaultAction ? (
                       splitDownloadButton(
                         primaryLabel,
-                        () => handleActionButton(preferred.href!, preferred.type),
+                        () => handleActionButton(preferred),
                         menuLinks,
                       )
                     ) : (

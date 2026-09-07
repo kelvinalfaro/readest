@@ -141,6 +141,17 @@ export async function copyURIToPath(request: CopyURIRequest): Promise<CopyURIRes
   return result;
 }
 
+export interface CopyPathToURIRequest {
+  src: string;
+  uri: string;
+}
+
+export async function copyPathToURI(request: CopyPathToURIRequest): Promise<CopyURIResponse> {
+  return await invoke<CopyURIResponse>('plugin:native-bridge|copy_path_to_uri', {
+    payload: request,
+  });
+}
+
 export async function saveImageToGallery(
   request: SaveImageToGalleryRequest,
 ): Promise<SaveImageToGalleryResponse> {

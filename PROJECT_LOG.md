@@ -2,6 +2,17 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-07 — BookOrbit M4B download/pairing repair
+
+- Preserved the exact acquisition selected from the OPDS format menu, so choosing M4B no longer falls through to opening an already-downloaded EPUB.
+- Split supported audiobook acquisitions (M4B, M4A, and MP3) from the ebook import path. They now use the existing authenticated OPDS downloader, prompt for a user-visible destination, and leave the EPUB/library record unchanged.
+- Added Android Storage Access Framework output support through a bounded native path-to-`content://` streaming command, avoiding large audio files crossing the JavaScript heap. Cache files are removed after save, cancellation, or failure.
+- Advanced the Android release version to `0.12.17` for signed updater delivery. Validation passed: 70 focused OPDS, audiobook-storage, and Android file-picker tests; TypeScript; targeted Biome; Rust formatting; `git diff --check`; and the optimized Tauri frontend production build. Local Rust/native compilation remains unavailable because this workstation lacks MSVC `link.exe`; Android device acceptance is still required.
+
+Open next steps:
+
+- Monitor the authorized signed `0.12.17` build, then run the EPUB-present and M4B-first scenarios from `HANDOFF_BookOrbit_M4B_Download_Pairing.md` and confirm the saved M4B can be selected and paired.
+
 ## 2026-09-06 — Upstream sync and Android audio-route resume repair
 
 - Created a recoverable local pre-merge branch and merged `upstream/main` at `b4d80d2b4` into the CWA fork, preserving CWA, BookOrbit SmartScope/OPDS settings, ungated self-built cloud/offline-audio access, and the newer upstream Notion, Nearby BookDrop, backup, and entitlement interfaces. Nothing was pushed or released.

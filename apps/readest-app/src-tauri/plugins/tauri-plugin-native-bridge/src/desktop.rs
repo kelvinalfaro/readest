@@ -60,6 +60,13 @@ impl<R: Runtime> NativeBridge<R> {
         Err(crate::Error::UnsupportedPlatformError)
     }
 
+    pub fn copy_path_to_uri(
+        &self,
+        _payload: CopyPathToURIRequest,
+    ) -> crate::Result<CopyURIResponse> {
+        Err(crate::Error::UnsupportedPlatformError)
+    }
+
     pub fn render_pdf_cover(
         &self,
         _payload: RenderPdfCoverRequest,

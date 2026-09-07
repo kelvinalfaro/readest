@@ -102,8 +102,51 @@ describe('PublicationView', () => {
 
     await waitFor(() => {
       expect(onDownload).toHaveBeenCalledWith(
-        '/download/book.epub',
-        'application/epub+zip',
+        expect.objectContaining({
+          href: '/download/book.epub',
+          type: 'application/epub+zip',
+        }),
+        expect.any(Function),
+      );
+    });
+    expect(navigateToReader).not.toHaveBeenCalled();
+  });
+
+  it('downloads the selected M4B instead of opening an existing EPUB', async () => {
+    const onDownload = vi.fn(async () => ({ kind: 'audiobook' as const, filename: 'Book.m4b' }));
+    const mixedPublication: OPDSPublication = {
+      ...publication,
+      links: [
+        publication.links[0]!,
+        {
+          rel: `${REL.ACQ}/open-access`,
+          href: '/download/book.m4b',
+          type: 'audio/mp4',
+          title: 'M4B',
+        },
+      ],
+    };
+
+    render(
+      <DropdownProvider>
+        <PublicationView
+          publication={mixedPublication}
+          baseURL='https://bookorbit.example.com/opds'
+          existingBook={existingBook}
+          resolveURL={(href, base) => new URL(href, base).toString()}
+          onDownload={onDownload}
+          onNavigate={vi.fn()}
+          onGenerateCachedImageUrl={vi.fn(async (url: string) => url)}
+        />
+      </DropdownProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'More formats' }));
+    fireEvent.click(screen.getByText('M4B'));
+
+    await waitFor(() => {
+      expect(onDownload).toHaveBeenCalledWith(
+        expect.objectContaining({ href: '/download/book.m4b', type: 'audio/mp4', title: 'M4B' }),
         expect.any(Function),
       );
     });
@@ -360,8 +403,10 @@ describe('PublicationView', () => {
       fireEvent.click(button);
 
       expect(onDownload).toHaveBeenCalledWith(
-        '/get/epub/56/Calibre_Library',
-        'application/epub+zip',
+        expect.objectContaining({
+          href: '/get/epub/56/Calibre_Library',
+          type: 'application/epub+zip',
+        }),
         expect.any(Function),
       );
       expect(screen.queryByText('KFX')).toBeNull();
@@ -379,8 +424,7 @@ describe('PublicationView', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Download EPUB' }));
 
       expect(onDownload).toHaveBeenCalledWith(
-        '/get/epub/1/lib',
-        'application/epub+zip',
+        expect.objectContaining({ href: '/get/epub/1/lib', type: 'application/epub+zip' }),
         expect.any(Function),
       );
     });

@@ -77,6 +77,12 @@ class CopyURIRequestArgs {
 }
 
 @InvokeArg
+class CopyPathToURIRequestArgs {
+    var src: String? = null
+    var uri: String? = null
+}
+
+@InvokeArg
 class RenderPdfCoverArgs {
     var filePath: String? = null
     var maxLongEdge: Int = 512
@@ -596,6 +602,31 @@ class NativeBridgePlugin(private val activity: Activity): Plugin(activity) {
                 } catch (e: Exception) {
                     r.put("success", false)
                     r.put("error", e.message)
+                }
+                r
+            }
+            if (isActive) invoke.resolve(ret)
+        }
+    }
+
+    @Command
+    fun copy_path_to_uri(invoke: Invoke) {
+        val args = invoke.parseArgs(CopyPathToURIRequestArgs::class.java)
+        pluginScope.launch {
+            val ret = withContext(Dispatchers.IO) {
+                val r = JSObject()
+                try {
+                    val src = File(args.src ?: "")
+                    if (!src.isFile) throw IOException("Source file does not exist")
+                    val uri = Uri.parse(args.uri ?: "")
+                    activity.contentResolver.openOutputStream(uri, "wt").use { output ->
+                        if (output == null) throw IOException("Failed to open destination URI")
+                        src.inputStream().use { input -> input.copyTo(output) }
+                    }
+                    r.put("success", true)
+                } catch (e: Exception) {
+                    r.put("success", false)
+                    r.put("error", e.message ?: "Failed to copy file to destination URI")
                 }
                 r
             }

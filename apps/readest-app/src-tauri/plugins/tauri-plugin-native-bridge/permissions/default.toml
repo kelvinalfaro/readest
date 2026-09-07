@@ -4,6 +4,7 @@ permissions = [
   "allow-auth-with-safari",
   "allow-auth-with-custom-tab",
   "allow-copy-uri-to-path",
+  "allow-copy-path-to-uri",
   "allow-save-image-to-gallery",
   "allow-use-background-audio",
   "allow-set-multicast-lock",

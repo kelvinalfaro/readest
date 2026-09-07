@@ -24,7 +24,7 @@ import { useLibrary } from '@/hooks/useLibrary';
 import { eventDispatcher } from '@/utils/event';
 import { navigateToReader } from '@/utils/nav';
 import { getFileExtFromMimeType } from '@/libs/document';
-import { OPDSFeed, OPDSPublication, OPDSSearch, REL } from '@/types/opds';
+import { OPDSFeed, OPDSPublication, OPDSSearch, REL, type OPDSAcquisitionLink } from '@/types/opds';
 import {
   expandOPDSSearchTemplate,
   getFileExtFromPath,
@@ -68,6 +68,11 @@ import {
 } from '@/services/bookorbit/librarySubscriptions';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
 import { uniqueId } from '@/utils/misc';
+import {
+  getAudiobookFilename,
+  isAudiobookAcquisition,
+  saveDownloadedAudiobook,
+} from '@/services/opds/audiobookAsset';
 
 type ViewMode = 'feed' | 'publication' | 'search' | 'loading' | 'error';
 
@@ -591,12 +596,13 @@ export default function BrowserPage() {
 
   const handleDownload = useCallback(
     async (
-      href: string,
-      type?: string,
+      link: OPDSAcquisitionLink,
       onProgress?: (progress: { progress: number; total: number }) => void,
     ) => {
       if (!appService || !libraryLoaded) return;
       try {
+        const href = link.href!;
+        const type = link.type;
         const url = resolveURL(href, state.baseURL);
         const parsed = parseMediaType(type);
         if (parsed?.mediaType === MIME.HTML) {
@@ -651,6 +657,26 @@ export default function BrowserPage() {
             await appService?.deleteFile(dstFilePath, 'None');
             console.log('Renamed downloaded file to:', newFilePath);
             dstFilePath = newFilePath;
+          }
+
+          if (isAudiobookAcquisition(link)) {
+            const audiobookFilename = getAudiobookFilename(
+              link,
+              probedFilename,
+              publication?.metadata?.title ?? '',
+            );
+            try {
+              const saved = await saveDownloadedAudiobook(
+                appService,
+                dstFilePath,
+                audiobookFilename,
+              );
+              return saved
+                ? ({ kind: 'audiobook', filename: audiobookFilename } as const)
+                : ({ kind: 'cancelled' } as const);
+            } finally {
+              await appService.deleteFile(dstFilePath, 'None').catch(() => undefined);
+            }
           }
 
           const { library, setLibrary } = useLibraryStore.getState();
