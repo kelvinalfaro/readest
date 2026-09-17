@@ -246,7 +246,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: setup node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -322,7 +322,7 @@ jobs:
         run: git submodule update --init --recursive
 
       - name: setup pnpm
-        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: setup node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
@@ -332,7 +332,7 @@ jobs:
 
       - name: setup Java (for Android build only)
         if: matrix.config.release == 'android'
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: 'zulu'
           java-version: '17'
@@ -340,6 +340,10 @@ jobs:
       - name: setup Android SDK (for Android build only)
         if: matrix.config.release == 'android'
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        with:
+          # The legacy `tools` package (part of the action's default) no longer
+          # exists in the SDK repository and makes sdkmanager fail.
+          packages: 'platform-tools'
 
       - name: install NDK (for Android build only)
         if: matrix.config.release == 'android'
@@ -360,6 +364,26 @@ jobs:
         with:
           key: ${{ matrix.config.os }}-${{ matrix.config.release }}-${{ matrix.config.arch }}-cargo
 
+      # The npm cli-cef bundles the AppImage with a broken quick-sharun fork
+      # and cannot be pointed elsewhere. Build the CLI from readest/tauri
+      # instead: its sharun_cef.rs pins pkgforge's deployment-array quoting
+      # fix (Anylinux-AppImages#855) and runs the tooling with bash and
+      # streamed output. Rev-pinned; the marker skips the rebuild while
+      # rust-cache keeps ~/.cargo/bin. scripts/tauri.mjs runs `cargo tauri`
+      # when TAURI_CEF_CARGO=1.
+      - name: install the CEF tauri CLI from readest/tauri (linux only)
+        if: matrix.config.release == 'linux'
+        run: |
+          set -euo pipefail
+          rev=2b8315bd14882471b6567b1ceba84c0c0238f156
+          marker="$HOME/.cargo/bin/.cargo-tauri-rev"
+          if [ -x "$HOME/.cargo/bin/cargo-tauri" ] && [ "$(cat "$marker" 2>/dev/null)" = "$rev" ]; then
+            echo "cargo-tauri at $rev already installed"
+            exit 0
+          fi
+          cargo install tauri-cli --git https://github.com/readest/tauri --rev "$rev" --locked --force
+          echo "$rev" > "$marker"
+
       - name: install dependencies (ubuntu only)
         if: contains(matrix.config.os, 'ubuntu') && matrix.config.release != 'android' && matrix.config.arch != 'armhf'
         run: |
@@ -378,45 +402,35 @@ jobs:
           echo 'CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER=arm-linux-gnueabihf-gcc' >> $GITHUB_ENV
           echo 'CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS=--cfg=io_uring_skip_arch_check' >> $GITHUB_ENV
 
-      # The CEF AppImage bundles the build host's glibc, so anything it does
-      # NOT bundle is resolved from the host at run time, against a glibc the
-      # bundled one cannot satisfy on any distro newer than the builder. NSS is
-      # the fatal case: Chromium dlopens libsoftokn3.so, gets the host copy and
-      # aborts on first use (FATAL crypto/nss_util.cc, nss_error=-5925).
-      #
-      # quick-sharun's own DEPLOY_CHROMIUM rules cover these modules, but the
-      # bundler in cli-cef 3.0.0-alpha.26 downloads a fork of that script
-      # (FabianLars/Anylinux-AppImages, taken on feat/cef to fix spaces in
-      # paths) which is ~1100 lines behind pkgforge upstream and expands its
-      # deployment array without `eval`: every path keeps its literal quotes,
-      # so EVERY DEPLOY_* extra is skipped and only ldd-derived libraries land
-      # in the bundle. tauri-apps/tauri#12491 drops that fork for a pinned,
-      # checksummed upstream revision (facb95e8, which has the `eval`). Once it
-      # reaches feat/cef and a new cli-cef ships, bump CEF_CLI in
-      # apps/readest-app/scripts/tauri.mjs, lift the STRACE_MODE pin in the
-      # build step and drop the jq call below. Keep the flatten unless dlopen
-      # discovery is doing the finding: upstream globs only Arch's flat layout,
-      # so a Debian builder hides these modules from it either way.
-      #
-      # Until then, hand the modules over as appimage.files: the bundler passes
-      # files targeted at /usr/lib to quick-sharun as plain ELF arguments, the
-      # injection channel #12491 keeps. Sources must sit directly in the triple
-      # lib dir (Debian hides them in <triple>/nss/) because the destination
-      # inside the bundle mirrors the source dir, and only a flat source lands
-      # next to the libnss3.so that loads it.
+      # Chromium dlopens NSS, libpulse and libspeechd by soname; whatever the
+      # bundle lacks comes from the host at run time and fails against the
+      # bundled glibc on any newer distro (NSS: FATAL crypto/nss_util.cc).
+      # quick-sharun's DEPLOY_CHROMIUM deploys NSS and, via DEPLOY_PIPEWIRE,
+      # pulse — with the pinned pkgforge script the CLI above uses. Three gaps
+      # remain, passed as appimage.files under /usr/lib, which the bundler
+      # hands to quick-sharun as arguments: Debian keeps the NSS modules in
+      # <triple>/nss/ where the Arch-layout globs miss them, and nothing
+      # deploys libspeechd. winit dlopens libxkbcommon-x11 by soname when it
+      # opens its X11 event loop (the CEF runtime forces X11 even on Wayland),
+      # and quick-sharun's Chromium rule would deploy it, but the runner image
+      # has no copy to deploy; without it every launch panics before the first
+      # log line (#6144). The npm cli-cef could do none of this: its
+      # quick-sharun fork drops the `eval` that rebuilds the deploy array
+      # (FabianLars/Anylinux-AppImages@3e280d1b), so every DEPLOY_* extra is
+      # silently skipped.
       - name: stage CEF AppImage runtime libraries (linux only)
         if: matrix.config.release == 'linux'
         run: |
           set -euo pipefail
-          sudo apt-get install -y libnss3
+          sudo apt-get install -y libnss3 libpulse0 libspeechd2 libxkbcommon-x11-0
           nss_dir=$(dirname "$(ls /usr/lib/*-linux-gnu/nss/libsoftokn3.so)")
           lib_dir=${nss_dir%/nss}
           sudo cp -f --remove-destination "$nss_dir"/*.so "$lib_dir/"
+          # +=: tauri.conf.json already ships the AppRun hook entry.
           conf=apps/readest-app/src-tauri/tauri.conf.json
-          jq --arg d "$lib_dir" '.bundle.linux.appimage.files = {
-              "/usr/lib/libsoftokn3.so": ($d + "/libsoftokn3.so"),
-              "/usr/lib/libfreeblpriv3.so": ($d + "/libfreeblpriv3.so"),
-              "/usr/lib/libnssckbi.so": ($d + "/libnssckbi.so")
+          jq --arg d "$lib_dir" '.bundle.linux.appimage.files += {
+              "/usr/lib/libspeechd.so.2": ($d + "/libspeechd.so.2"),
+              "/usr/lib/libxkbcommon-x11.so.0": ($d + "/libxkbcommon-x11.so.0")
             }' "$conf" > "$conf.tmp" && mv "$conf.tmp" "$conf"
 
       - name: create .env.local file for Next.js
@@ -522,15 +536,10 @@ jobs:
         if: matrix.config.release != 'android'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The CEF AppImage bundler (quick-sharun) otherwise launches the app
-          # under Xvfb to discover dlopen'ed libraries and never gets it to
-          # exit, hanging the Linux legs (#4906); ldd-based discovery only.
-          # The hang is the tooling's: it kills the traced app with a
-          # process-group signal that dash (/bin/sh on Ubuntu) never sets up
-          # without a terminal, and the CLI captures its output, so a surviving
-          # CEF child holds the pipes open. tauri-apps/tauri#12491 fixes both
-          # (bash + streamed output); drop this pin when cli-cef carries it and
-          # dlopen discovery — which is what bundles mesa/GL — comes back.
+          TAURI_CEF_CARGO: '1'
+          # quick-sharun would otherwise run the app under Xvfb to find dlopen'ed
+          # libraries and hung CI (#4906). The CLI now runs it with bash and
+          # streamed output, which fixes that; lifting this is its own change.
           STRACE_MODE: '0'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -552,20 +561,26 @@ jobs:
           releaseBody: ${{ needs.get-release.outputs.release_note }}
           args: ${{ matrix.config.args || '' }}
 
-      # quick-sharun skips anything it cannot find without failing, which is
-      # how a nightly AppImage shipped with no NSS modules at all. Fail the leg
-      # instead of publishing a bundle that crashes on first use. The path is
-      # the AppDir quick-sharun packed, left next to the AppImage in the
-      # WORKSPACE target dir. libsqlite3 is not staged explicitly — it must
-      # arrive as libsoftokn3.so's own ldd dependency.
-      - name: verify the AppImage bundled its NSS modules (linux only)
+      # quick-sharun skips what it cannot find without failing; catch that
+      # before it ships.
+      - name: verify the AppImage bundle contents (linux only)
         if: matrix.config.release == 'linux'
         run: |
           set -euo pipefail
           lib=target/release/bundle/appimage/Readest.AppDir/lib
-          for so in libsoftokn3.so libfreeblpriv3.so libnssckbi.so libsqlite3.so.0; do
+          for so in libsoftokn3.so libfreeblpriv3.so libnssckbi.so libsqlite3.so.0 \
+                    libpulse.so.0 libspeechd.so.2 libxkbcommon-x11.so.0; do
             [ -e "$lib/$so" ] || { echo "::error::$so is missing from the AppImage bundle"; exit 1; }
           done
+          # libpulse finds its private half through a host RUNPATH; lib.path
+          # has to cover the bundled copy for it to win.
+          ls "$lib"/pulseaudio/libpulsecommon-*.so > /dev/null 2>&1 \
+            || { echo "::error::libpulsecommon is missing from the AppImage bundle"; exit 1; }
+          grep -qx '+/pulseaudio' "$lib/lib.path" \
+            || { echo "::error::lib.path does not cover lib/pulseaudio, so libpulse cannot load"; exit 1; }
+          # Without this hook every new AppImage asks for a root password.
+          [ -e "${lib%/lib}/bin/00-no-userns-prompt.hook" ] \
+            || { echo "::error::the no-userns-prompt hook is missing from the AppImage bundle"; exit 1; }
 
       # Attest the freshly built desktop bundles (installers, AppImage, dmg,
       # updater archives + their .sig). tauri-action reports their on-disk paths
