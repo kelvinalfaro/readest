@@ -2,6 +2,13 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-17 — Upstream sync and Android Auto library browsing
+
+- Created recovery branch `backup/main-pre-upstream-20260917-android-auto` and merged current `upstream/main` at `5c316f416` into the CWA fork as `dc423be02`, preserving CWA, BookOrbit, LocalSend, local-access overrides, audiobook handling, and explicit retry of exhausted provider downloads.
+- Re-enabled the Android Auto media-app declaration and extended the existing `MediaBrowserServiceCompat` instead of adding another playback engine. Readest now mirrors up to 100 recent locally playable books into native storage and exposes them under a browsable Library node in the Android Auto launcher.
+- Selecting an ebook routes to the existing reader and resumes Read Aloud at saved progress; selecting an audiobook routes to the existing player, which resumes from its saved position. The active-title media item and existing play, pause, seek, next, previous, audio-focus, and route-handoff behavior remain intact.
+- Validation passed: 11,217 tests across 938 files (16 skipped), TypeScript/Biome lint across 2,410 files, focused Android Auto/media tests, Rust formatting for the changed plugin files, and the optimized production frontend build. Local native compilation still stops at the known missing MSVC `link.exe`, so a signed Android build and physical Android Auto browse/select/play acceptance remain required before release.
+
 ## 2026-09-07 — BookOrbit M4B download/pairing repair
 
 - Preserved the exact acquisition selected from the OPDS format menu, so choosing M4B no longer falls through to opening an already-downloaded EPUB.

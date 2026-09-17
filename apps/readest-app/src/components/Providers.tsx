@@ -36,6 +36,7 @@ import { CommandPaletteProvider, CommandPalette } from '@/components/command-pal
 import AtmosphereOverlay from '@/components/AtmosphereOverlay';
 import AppLockScreen from '@/components/AppLockScreen';
 import TVModeController from '@/components/TVModeController';
+import AndroidAutoLibraryBridge from '@/components/AndroidAutoLibraryBridge';
 import AppLockDialog from '@/components/settings/AppLockDialog';
 import PassphrasePrompt from '@/components/PassphrasePrompt';
 import TelemetryConsentDialog from '@/components/TelemetryConsentDialog';
@@ -232,6 +233,7 @@ const Providers = ({ children }: { children: React.ReactNode }) => {
   return (
     <CSPostHogProvider>
       <TVModeController />
+      <AndroidAutoLibraryBridge />
       <AuthProvider>
         <IconContext.Provider value={{ size: `${iconSize}px` }}>
           <SyncProvider>

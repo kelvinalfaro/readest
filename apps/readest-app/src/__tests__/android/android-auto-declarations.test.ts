@@ -10,15 +10,9 @@ import { resolve } from 'path';
  * then connects to the exported MediaBrowserService
  * (com.readest.native_tts.MediaPlaybackService) to drive TTS playback.
  *
- * The car meta-data is currently WITHDRAWN. It was first withdrawn in #5038
- * after a Play Auto rejection, re-enabled in #5066, then withdrawn again after
- * Play rejected version code 11020 for inconsistent TTS playback in the car.
- * Until the car audio bug is fixed the opt-in stays out, so this test asserts
- * the meta-data is ABSENT; flip it back to `toContain` when re-enabling.
- *
- * The automotive descriptor and the exported MediaBrowserService stay in
- * place (the service also backs the phone lock-screen/background TTS media
- * session), so those declarations are still asserted below.
+ * Readest mirrors locally playable library metadata into the native service.
+ * The service exposes that list as a driver-safe browse tree and routes a
+ * selection back into the existing ebook TTS or audiobook player.
  */
 
 const manifest = readFileSync(
@@ -41,8 +35,9 @@ const nativeTTSPlugin = readFileSync(
 );
 
 describe('Android Auto declarations (#3919)', () => {
-  it('does not opt in to car projection while Android Auto is withdrawn', () => {
-    expect(manifest).not.toContain('com.google.android.gms.car.application');
+  it('opts in to Android Auto media projection', () => {
+    expect(manifest).toContain('com.google.android.gms.car.application');
+    expect(manifest).toContain('android:resource="@xml/automotive_app_desc"');
   });
 
   it('keeps the automotive descriptor with the media capability for re-enabling', () => {
@@ -68,5 +63,12 @@ describe('Android Auto declarations (#3919)', () => {
     expect(nativeTTSPlugin).toContain(
       'setAudioAttributes(MediaPlaybackService.SPOKEN_MEDIA_ATTRIBUTES)',
     );
+  });
+
+  it('publishes a browsable library and routes selected books to the app', () => {
+    expect(mediaPlaybackService).toContain('LIBRARY_ROOT_ID');
+    expect(mediaPlaybackService).toContain('MediaBrowserCompat.MediaItem.FLAG_BROWSABLE');
+    expect(mediaPlaybackService).toContain('media-session-play-book');
+    expect(nativeTTSPlugin).toContain('fun update_media_library');
   });
 });
