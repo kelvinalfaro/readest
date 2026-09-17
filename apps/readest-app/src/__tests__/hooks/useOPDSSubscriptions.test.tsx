@@ -34,6 +34,14 @@ import { useOPDSSubscriptions } from '@/hooks/useOPDSSubscriptions';
 const mockedSync = vi.mocked(syncSubscribedCatalogs);
 const mockedQueueUpload = vi.mocked(transferManager.queueUpload);
 
+const callOnBooksImported = async (
+  options: Parameters<typeof syncSubscribedCatalogs>[3],
+  books: Book[],
+) => {
+  const onBooksImported = typeof options === 'function' ? options : options?.onBooksImported;
+  await onBooksImported?.(books);
+};
+
 const makeBook = (hash: string, overrides: Partial<Book> = {}): Book =>
   ({
     hash,
@@ -85,7 +93,7 @@ describe('useOPDSSubscriptions', () => {
       const book = makeBook('new-book', { downloadedAt: Date.now() });
       // The real service persists the imported books (via the callback)
       // before recording their entries in knownEntryIds.
-      await options?.onBooksImported?.([book]);
+      await callOnBooksImported(options, [book]);
       return { newBooks: [book], totalNewBooks: 1, errors: [] };
     });
 
@@ -114,7 +122,7 @@ describe('useOPDSSubscriptions', () => {
       row.deletedAt = null;
       row.updatedAt = Date.now();
       row.downloadedAt = Date.now();
-      await options?.onBooksImported?.([row]);
+      await callOnBooksImported(options, [row]);
       return { newBooks: [row], totalNewBooks: 1, errors: [] };
     });
 
@@ -142,7 +150,7 @@ describe('useOPDSSubscriptions', () => {
       const book = makeBook('sub-book');
       mockedSync.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
       mockedSync.mockImplementationOnce(async (_c, _a, _b, options) => {
-        await options?.onBooksImported?.([book]);
+        await callOnBooksImported(options, [book]);
         return { newBooks: [book], totalNewBooks: 1, errors: [] };
       });
 
@@ -172,7 +180,7 @@ describe('useOPDSSubscriptions', () => {
       const book = makeBook('sub-book');
       mockedSync.mockResolvedValue({ newBooks: [], totalNewBooks: 0, errors: [] });
       mockedSync.mockImplementationOnce(async (_c, _a, _b, options) => {
-        await options?.onBooksImported?.([book]);
+        await callOnBooksImported(options, [book]);
         return { newBooks: [book], totalNewBooks: 1, errors: [] };
       });
 
