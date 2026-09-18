@@ -92,4 +92,15 @@ describe('Android Auto declarations (#3919)', () => {
     );
     expect(idleShutdownBlock).not.toContain('pluginEventTrigger = null');
   });
+
+  it('keeps book switches from accepting stale playback or artwork updates', () => {
+    expect(nativeTTSPlugin).toContain(
+      'MediaPlaybackService.requestActivation(args.sessionId, args.bookHash)',
+    );
+    expect(nativeTTSPlugin).toContain(
+      'MediaPlaybackService.pushMetadata(args.sessionId, title, artist, artworkBitmap)',
+    );
+    expect(mediaPlaybackService).toContain('MediaSessionActivationState.acceptsUpdate(sessionId)');
+    expect(mediaPlaybackService).toContain('service.resetArtworkForBook(bookHash)');
+  });
 });

@@ -455,6 +455,7 @@ describe('TTSMediaBridge bind teardown race (READEST-1A)', () => {
     expect(tauriSession.setActive).toHaveBeenCalledWith(
       expect.objectContaining({
         active: true,
+        sessionId: 'hash-abc',
         foregroundServiceTitle: 'Alice',
         foregroundServiceText: 'Carroll',
       }),
@@ -520,8 +521,36 @@ describe('TTSMediaBridge bind teardown race (READEST-1A)', () => {
     await Promise.all([first, second]);
 
     expect(states.map((state) => state.active)).toEqual([true, false, true]);
+    expect(states[1]).toEqual(expect.objectContaining({ sessionId: 'hash-abc' }));
     expect(states.at(-1)).toEqual(expect.objectContaining({ active: true, bookTitle: 'New book' }));
     expect(bridge.isBound).toBe(true);
+  });
+
+  test('reconciles playback that started while native activation was pending', async () => {
+    const tauriSession = new TauriMediaSession();
+    let releaseActivation!: () => void;
+    tauriSession.setActive = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseActivation = resolve;
+      });
+    });
+    tauriSession.updateMetadata = vi.fn().mockResolvedValue(undefined);
+    tauriSession.updatePlaybackState = vi.fn().mockResolvedValue(undefined);
+    tauriSession.setActionHandler = vi.fn();
+    const bridge = new TTSMediaBridge(() => tauriSession);
+    const controller = new FakeController();
+    controller.state = 'stopped';
+
+    const binding = bridge.bind(controller as unknown as TTSController, meta());
+    await Promise.resolve();
+    // The controller starts before bind() has registered its state listener,
+    // exactly the window that previously left Android Auto showing stopped.
+    controller.state = 'playing';
+    releaseActivation();
+    await binding;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(tauriSession.updatePlaybackState).toHaveBeenCalledWith({ playing: true });
   });
 
   test('does not crash when unbound while the cover loads', async () => {

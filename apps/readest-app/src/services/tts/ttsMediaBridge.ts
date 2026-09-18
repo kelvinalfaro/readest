@@ -158,6 +158,7 @@ export class TTSMediaBridge {
       // can be slow and must never delay Android's active media service.
       await mediaSession.setActive({
         active: true,
+        sessionId: meta.bookKey,
         ownsAudioFocus: meta.ownsAudioFocus ?? true,
         foregroundServiceTitle: meta.title,
         foregroundServiceText: meta.author,
@@ -211,6 +212,14 @@ export class TTSMediaBridge {
     controller.addEventListener('tts-state-change', this.#onStateChange);
 
     void this.#loadArtwork(mediaSession, meta, bindingId);
+    // Activation and listener registration both await native work. An
+    // audiobook can begin playing during that window, before either event
+    // listener exists. Reconcile the live controller once so Android Auto is
+    // never left stopped over audio that is already playing.
+    if (mediaSession instanceof TauriMediaSession) {
+      void this.#updatePlaybackState();
+      void this.#updatePositionState();
+    }
   }
 
   unbind(): void {
@@ -244,7 +253,7 @@ export class TTSMediaBridge {
         }
       }
       if (mediaSession instanceof TauriMediaSession) {
-        void mediaSession.setActive({ active: false });
+        void mediaSession.setActive({ active: false, sessionId: this.#meta?.bookKey });
       }
     }
     this.#endSkip();

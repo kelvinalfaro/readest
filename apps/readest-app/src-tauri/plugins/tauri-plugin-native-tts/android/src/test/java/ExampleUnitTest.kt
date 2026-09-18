@@ -26,4 +26,18 @@ class ExampleUnitTest {
         MediaSessionActivationState.requestActivation()
         assertTrue(MediaSessionActivationState.isActivationDesired())
     }
+
+    @Test
+    fun staleSessionCannotDeactivateOrOverwriteReplacement() {
+        MediaSessionActivationState.requestActivation("old-session")
+        MediaSessionActivationState.requestActivation("new-session")
+
+        assertFalse(MediaSessionActivationState.requestDeactivation("old-session"))
+        assertTrue(MediaSessionActivationState.isActivationDesired())
+        assertFalse(MediaSessionActivationState.acceptsUpdate("old-session"))
+        assertTrue(MediaSessionActivationState.acceptsUpdate("new-session"))
+
+        assertTrue(MediaSessionActivationState.requestDeactivation("new-session"))
+        assertFalse(MediaSessionActivationState.isActivationDesired())
+    }
 }
