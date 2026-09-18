@@ -5,7 +5,7 @@ import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/
 import type { Book } from '@/types/book';
 import { useAppRouter } from '@/hooks/useAppRouter';
 import { useLibraryStore } from '@/store/libraryStore';
-import { isTauriAppPlatform } from '@/services/environment';
+import { getInitializedAppService, isTauriAppPlatform } from '@/services/environment';
 import { getOSPlatform } from '@/utils/misc';
 import { isAudiobook } from '@/utils/audiobook';
 import { setPendingTTSAutoplay } from '@/utils/ttsAutoplay';
@@ -19,9 +19,16 @@ export interface AndroidAutoBook {
   hash: string;
   title: string;
   author: string;
+  coverHash: string | null;
+  artworkReady: boolean;
 }
 
-export const getAndroidAutoLibraryBooks = (library: Book[]): AndroidAutoBook[] =>
+type CoverThumbnail = { coverHash: string | null; url: string };
+
+export const getAndroidAutoLibraryBooks = (
+  library: Book[],
+  coverThumbnails: Map<string, CoverThumbnail> = new Map(),
+): AndroidAutoBook[] =>
   library
     .filter(
       (book) =>
@@ -30,13 +37,44 @@ export const getAndroidAutoLibraryBooks = (library: Book[]): AndroidAutoBook[] =
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, MAX_ANDROID_AUTO_BOOKS)
-    .map(({ hash, title, author }) => ({ hash, title, author }));
+    .map(({ hash, title, author, coverHash }) => {
+      const normalizedCoverHash = coverHash ?? null;
+      const thumbnail = coverThumbnails.get(hash);
+      return {
+        hash,
+        title,
+        author,
+        coverHash: normalizedCoverHash,
+        artworkReady: !!thumbnail && thumbnail.coverHash === normalizedCoverHash,
+      };
+    });
 
 const AndroidAutoLibraryBridge = () => {
   const router = useAppRouter();
   const library = useLibraryStore((state) => state.library);
   const libraryLoaded = useLibraryStore((state) => state.libraryLoaded);
-  const booksJson = useMemo(() => JSON.stringify(getAndroidAutoLibraryBooks(library)), [library]);
+  const coverThumbnails = useLibraryStore((state) => state.coverThumbnails);
+  const androidAutoBooks = useMemo(
+    () => getAndroidAutoLibraryBooks(library, coverThumbnails),
+    [coverThumbnails, library],
+  );
+  const booksJson = useMemo(() => JSON.stringify(androidAutoBooks), [androidAutoBooks]);
+
+  useEffect(() => {
+    if (!libraryLoaded || !isTauriAppPlatform() || getOSPlatform() !== 'android') return;
+
+    // Android Auto artwork must be exposed as a local content:// URI. Reuse
+    // Readest's bounded JPEG thumbnail cache rather than parceling full cover
+    // bitmaps through the media browser. Thumbnail-ready events update the
+    // store above, which republishes the library and refreshes the car UI.
+    const selectedHashes = new Set(getAndroidAutoLibraryBooks(library).map((book) => book.hash));
+    const appService = getInitializedAppService();
+    if (appService?.supportsCoverThumbnailOptimization) {
+      for (const book of library) {
+        if (selectedHashes.has(book.hash)) appService.requestCoverThumbnail(book);
+      }
+    }
+  }, [library, libraryLoaded]);
 
   useEffect(() => {
     if (!libraryLoaded || !isTauriAppPlatform() || getOSPlatform() !== 'android') return;

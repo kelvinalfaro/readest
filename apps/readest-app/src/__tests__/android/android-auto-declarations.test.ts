@@ -69,6 +69,27 @@ describe('Android Auto declarations (#3919)', () => {
     expect(mediaPlaybackService).toContain('LIBRARY_ROOT_ID');
     expect(mediaPlaybackService).toContain('MediaBrowserCompat.MediaItem.FLAG_BROWSABLE');
     expect(mediaPlaybackService).toContain('media-session-play-book');
+    expect(mediaPlaybackService).toContain('PlaybackStateCompat.STATE_BUFFERING');
+    expect(mediaPlaybackService).toContain('.setIconUri(libraryArtworkUri(book))');
     expect(nativeTTSPlugin).toContain('fun update_media_library');
+  });
+
+  it('keeps the browsing media session active while playback is stopped', () => {
+    const createBlock = mediaPlaybackService.slice(
+      mediaPlaybackService.indexOf('override fun onCreate()'),
+      mediaPlaybackService.indexOf('private fun activateSession()'),
+    );
+    const deactivateBlock = mediaPlaybackService.slice(
+      mediaPlaybackService.indexOf('private fun deactivateSession()'),
+      mediaPlaybackService.indexOf('private inner class SessionCallback'),
+    );
+    expect(createBlock).toContain('isActive = true');
+    expect(deactivateBlock).not.toContain('isActive = false');
+
+    const idleShutdownBlock = nativeTTSPlugin.slice(
+      nativeTTSPlugin.indexOf('private fun shutdownTTSEngine()'),
+      nativeTTSPlugin.indexOf('fun destroy()'),
+    );
+    expect(idleShutdownBlock).not.toContain('pluginEventTrigger = null');
   });
 });

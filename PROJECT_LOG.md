@@ -2,6 +2,13 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-18 — Android Auto selection and library artwork repair
+
+- Device acceptance confirmed that Readest appears in the Android Auto launcher and its Library node lists books, but selecting one ended with Android Auto's `Could not load your selection` message. The native media session had been marked inactive whenever no TTS session was already playing, so it could browse while rejecting a new playable-item command.
+- Kept the bound media session command-ready in the stopped state, reports a selected book as buffering while the existing reader/player opens it, and preserves the WebView event route across idle TTS shutdown or a failed playback activation. Audio focus, foreground service state, and the silent route keeper remain gated by the separate active-playback flag.
+- Added browse artwork through Readest's existing bounded JPEG cover-thumbnail cache. Library items publish local `content://` icon URIs with explicit client grants, avoiding full-cover Binder payloads and following Android Auto's local-URI artwork contract.
+- Focused Android Auto/library tests, TypeScript, targeted Biome checks, and the production frontend build pass. The local Android build again stops before Kotlin compilation at the known missing MSVC `link.exe`; a signed workflow build and physical select/read-aloud plus cover-art acceptance remain open. Nothing has been pushed or released.
+
 ## 2026-09-17 — Upstream sync and Android Auto library browsing
 
 - Created recovery branch `backup/main-pre-upstream-20260917-android-auto` and merged current `upstream/main` at `5c316f416` into the CWA fork as `dc423be02`, preserving CWA, BookOrbit, LocalSend, local-access overrides, audiobook handling, and explicit retry of exhausted provider downloads.

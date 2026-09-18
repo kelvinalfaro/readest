@@ -655,7 +655,6 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         } catch (e: Exception) {
             if (active) {
                 MediaPlaybackService.requestDeactivation()
-                MediaPlaybackService.pluginEventTrigger = null
             }
             invoke.reject("Failed to set media session active state: ${e.message}")
         }
@@ -793,7 +792,6 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
         try {
             abortPlayout()
             MediaPlaybackService.requestDeactivation()
-            MediaPlaybackService.pluginEventTrigger = null
 
             initializationJob?.cancel()
             initializationJob = null

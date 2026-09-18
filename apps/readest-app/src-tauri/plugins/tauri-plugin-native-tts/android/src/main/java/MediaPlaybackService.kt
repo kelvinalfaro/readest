@@ -43,6 +43,8 @@ internal data class AndroidAutoBook(
     val hash: String,
     val title: String,
     val author: String,
+    val coverHash: String?,
+    val artworkReady: Boolean,
 )
 
 internal object MediaSessionActivationState {
@@ -196,6 +198,8 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         private const val KEY_AUTHOR = "author"
         private const val PREFS_MEDIA_LIBRARY = "media_library"
         private const val KEY_LIBRARY_JSON = "books_json"
+        private const val COVER_THUMBNAIL_CACHE_DIR = "cover-thumbnails/v1"
+        private val MD5_PATTERN = Regex("^[0-9a-fA-F]{32}$")
 
         var pluginEventTrigger: ((String, JSObject) -> Unit)? = null
 
@@ -288,6 +292,10 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                             hash = hash,
                             title = title,
                             author = item.optString("author").trim(),
+                            coverHash = item.optString("coverHash")
+                                .trim()
+                                .takeIf { MD5_PATTERN.matches(it) },
+                            artworkReady = item.optBoolean("artworkReady", false),
                         )
                     )
                 }
@@ -393,8 +401,15 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID or
                 PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
             )
-            setPlaybackState(stateBuilder.build())
+            setPlaybackState(
+                stateBuilder.setState(PlaybackStateCompat.STATE_STOPPED, 0L, 1f).build()
+            )
             setCallback(SessionCallback())
+            // A browser client can select a book while no TTS session is
+            // already playing. Keep the media session command-ready for the
+            // lifetime of the bound service; sessionActive separately gates
+            // audio focus, foreground state, and the silent route keeper.
+            isActive = true
             setSessionToken(sessionToken)
         }
 
@@ -454,7 +469,6 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             unregisterReceiver(becomingNoisyReceiver)
         }
 
-        mediaSession?.isActive = false
         mediaSession?.setPlaybackState(
             stateBuilder.setState(PlaybackStateCompat.STATE_STOPPED, 0L, 1f).build()
         )
@@ -523,6 +537,21 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 else -> lastBookHash
             } ?: return
 
+            val selectedBook = libraryBooks.firstOrNull { it.hash == hash }
+            if (selectedBook != null) {
+                currentTitle = selectedBook.title
+                currentArtist = selectedBook.author
+                currentPositionMs = 0L
+                mediaSession?.setMetadata(buildLibraryBookMetadata(selectedBook))
+            }
+            // A playable-item request is asynchronous: the WebView still has
+            // to open the book and initialize its saved reader/player state.
+            // Report that work immediately so Android Auto keeps the selection
+            // alive instead of timing out with "Could not load your selection."
+            mediaSession?.setPlaybackState(
+                stateBuilder.setState(PlaybackStateCompat.STATE_BUFFERING, 0L, 1f).build()
+            )
+
             // Normal case: the app process is alive in the background. Let the
             // global bridge select the book and start the existing ebook TTS or
             // audiobook player without trying to display phone UI in the car.
@@ -579,8 +608,8 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     private val browserClients =
         java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
-    private fun grantArtworkTo(pkg: String) {
-        val uri = currentArtworkUri ?: return
+    private fun grantArtworkTo(pkg: String, artworkUri: Uri? = currentArtworkUri) {
+        val uri = artworkUri ?: return
         try {
             grantUriPermission(pkg, uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
         } catch (e: Exception) {
@@ -611,6 +640,33 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         // is set, and the grant is cheap + idempotent.
         for (pkg in ARTWORK_URI_CLIENTS) grantArtworkTo(pkg)
         for (pkg in browserClients.toList()) grantArtworkTo(pkg)
+    }
+
+    private fun libraryArtworkUri(book: AndroidAutoBook): Uri? {
+        if (!book.artworkReady || !MD5_PATTERN.matches(book.hash)) return null
+        val cacheKey = book.coverHash ?: "legacy"
+        val file = File(cacheDir, "$COVER_THUMBNAIL_CACHE_DIR/${book.hash}-$cacheKey.jpg")
+        if (!file.isFile) return null
+        return try {
+            FileProvider.getUriForFile(this, "$packageName.fileprovider", file).also { uri ->
+                for (pkg in ARTWORK_URI_CLIENTS) grantArtworkTo(pkg, uri)
+                for (pkg in browserClients.toList()) grantArtworkTo(pkg, uri)
+            }
+        } catch (e: Exception) {
+            Log.w("MediaPlaybackService", "Failed to publish library artwork for ${book.hash}", e)
+            null
+        }
+    }
+
+    private fun buildLibraryBookMetadata(book: AndroidAutoBook): MediaMetadataCompat {
+        val builder = MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, book.title)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, book.author)
+        libraryArtworkUri(book)?.let { uri ->
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, uri.toString())
+            builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, uri.toString())
+        }
+        return builder.build()
     }
 
     private fun buildMediaMetadata(): MediaMetadataCompat {
@@ -757,27 +813,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
         val items = mutableListOf<MediaBrowserCompat.MediaItem>()
         if (parentId == MEDIA_ROOT_ID && sessionActive) {
-            // Downscale the cover for the browse item: MediaItems are parceled
-            // across binder to the car client, which caps transactions at ~1MB.
-            val icon = currentArtwork?.let { art ->
-                val maxSide = maxOf(art.width, art.height)
-                if (maxSide > 512) {
-                    val scale = 512f / maxSide
-                    Bitmap.createScaledBitmap(
-                        art,
-                        (art.width * scale).toInt().coerceAtLeast(1),
-                        (art.height * scale).toInt().coerceAtLeast(1),
-                        true
-                    )
-                } else {
-                    art
-                }
-            }
+            refreshArtworkUri()
             val description = MediaDescriptionCompat.Builder()
                 .setMediaId(CURRENT_READING_MEDIA_ID)
                 .setTitle(currentTitle)
                 .setSubtitle(currentArtist)
-                .setIconBitmap(icon)
+                .setIconUri(currentArtworkUri)
                 .build()
             items.add(MediaBrowserCompat.MediaItem(description, MediaBrowserCompat.MediaItem.FLAG_PLAYABLE))
         }
@@ -800,6 +841,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                     .setMediaId("$BOOK_MEDIA_ID_PREFIX${book.hash}")
                     .setTitle(book.title)
                     .setSubtitle(book.author)
+                    .setIconUri(libraryArtworkUri(book))
                     .build()
                 items.add(
                     MediaBrowserCompat.MediaItem(
