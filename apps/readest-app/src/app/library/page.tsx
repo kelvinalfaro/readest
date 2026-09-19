@@ -742,6 +742,31 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     setShowCatalogManager(true);
   };
 
+  const handleOpenCWALibrary = () => {
+    router.push('/cwa');
+  };
+
+  const handleOpenBookOrbitLibrary = () => {
+    const bookorbit = getBookOrbitSettings(useSettingsStore.getState().settings);
+    const enabledSubscriptions = bookorbit.subscriptions.filter(
+      (subscription) => subscription.enabled,
+    );
+    if (enabledSubscriptions.length === 1) {
+      router.push(
+        `/opds?from=bookorbit&bookorbitSubscriptionId=${encodeURIComponent(enabledSubscriptions[0]!.id)}`,
+      );
+      return;
+    }
+
+    // With no SmartScope (or several to choose among), the integration page
+    // is the BookOrbit library hub: it provides discovery and one Browse
+    // action per configured scope.
+    const store = useSettingsStore.getState();
+    store.setRequestedPanel('Integrations');
+    store.setRequestedSubPage('bookorbit');
+    store.setSettingsDialogOpen(true);
+  };
+
   const handleDismissOPDSDialog = () => {
     setShowCatalogManager(false);
     const params = new URLSearchParams(window.location.search);
@@ -1986,6 +2011,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
             appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
           }
           onImportFromWebBrowser={isTauriAppPlatform() ? () => setShowWebSources(true) : undefined}
+          onOpenCWALibrary={handleOpenCWALibrary}
+          onOpenBookOrbitLibrary={handleOpenBookOrbitLibrary}
           onImportBookFromNovelUrl={
             isTauriAppPlatform() ? () => setShowImportNovel(true) : undefined
           }
@@ -2154,6 +2181,8 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
             appService?.canReadExternalDir ? handleImportBooksFromDirectory : undefined
           }
           onImportFromWebBrowser={isTauriAppPlatform() ? () => setShowWebSources(true) : undefined}
+          onOpenCWALibrary={handleOpenCWALibrary}
+          onOpenBookOrbitLibrary={handleOpenBookOrbitLibrary}
           onImportBookFromNovelUrl={
             isTauriAppPlatform() ? () => setShowImportNovel(true) : undefined
           }

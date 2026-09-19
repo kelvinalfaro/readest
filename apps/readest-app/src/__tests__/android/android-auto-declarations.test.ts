@@ -33,6 +33,10 @@ const nativeTTSPlugin = readFileSync(
   ),
   'utf-8',
 );
+const androidAutoBridge = readFileSync(
+  resolve(process.cwd(), 'src/components/AndroidAutoLibraryBridge.tsx'),
+  'utf-8',
+);
 
 describe('Android Auto declarations (#3919)', () => {
   it('opts in to Android Auto media projection', () => {
@@ -71,7 +75,21 @@ describe('Android Auto declarations (#3919)', () => {
     expect(mediaPlaybackService).toContain('media-session-play-book');
     expect(mediaPlaybackService).toContain('PlaybackStateCompat.STATE_BUFFERING');
     expect(mediaPlaybackService).toContain('.setIconUri(libraryArtworkUri(book))');
+    expect(mediaPlaybackService).toContain('pendingIntentBackgroundActivityStartMode');
+    expect(mediaPlaybackService).toContain('dispatchOrQueueBookPlayback(hash)');
+    expect(androidAutoBridge).toContain('selectionListenerReady');
+    expect(androidAutoBridge).toContain('&autoplay=1');
     expect(nativeTTSPlugin).toContain('fun update_media_library');
+  });
+
+  it('waits for real audio before reporting playback and uses fresh artwork URIs', () => {
+    const activateBlock = mediaPlaybackService.slice(
+      mediaPlaybackService.indexOf('private fun activateSession()'),
+      mediaPlaybackService.indexOf('private fun deactivateSession()'),
+    );
+    expect(activateBlock).toContain('player.playWhenReady = false');
+    expect(activateBlock).toContain('PlaybackStateCompat.STATE_PAUSED');
+    expect(mediaPlaybackService).toContain('File.createTempFile("tts_cover_');
   });
 
   it('keeps the browsing media session active while playback is stopped', () => {

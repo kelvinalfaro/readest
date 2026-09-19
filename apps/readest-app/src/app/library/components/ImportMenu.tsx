@@ -15,6 +15,7 @@ export interface ImportMenuProps {
   onImportBooksFromDirectory?: () => void;
   onImportFromWebBrowser?: () => void;
   onOpenCWALibrary?: () => void;
+  onOpenBookOrbitLibrary?: () => void;
   onImportBookFromNovelUrl?: () => void;
   onOpenCatalogManager: () => void;
   onOpenFeeds: () => void;
@@ -27,6 +28,7 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
   onImportBooksFromDirectory,
   onImportFromWebBrowser,
   onOpenCWALibrary,
+  onOpenBookOrbitLibrary,
   onImportBookFromNovelUrl,
   onOpenCatalogManager,
   onOpenFeeds,
@@ -61,6 +63,11 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
 
   const handleOpenCWALibrary = () => {
     onOpenCWALibrary?.();
+    setIsDropdownOpen?.(false);
+  };
+
+  const handleOpenBookOrbitLibrary = () => {
+    onOpenBookOrbitLibrary?.();
     setIsDropdownOpen?.(false);
   };
 
@@ -109,11 +116,20 @@ const ImportMenu: React.FC<ImportMenuProps> = ({
         Icon={<MdRssFeed className='h-5 w-5' />}
         onClick={handleOpenFeeds}
       />
-      <MenuItem
-        label={_('CWA Library')}
-        Icon={<RiServerLine className='h-5 w-5' />}
-        onClick={handleOpenCWALibrary}
-      />
+      {onOpenCWALibrary && (
+        <MenuItem
+          label={_('CWA Library')}
+          Icon={<RiServerLine className='h-5 w-5' />}
+          onClick={handleOpenCWALibrary}
+        />
+      )}
+      {onOpenBookOrbitLibrary && (
+        <MenuItem
+          label={_('BookOrbit Library')}
+          Icon={<RiServerLine className='h-5 w-5' />}
+          onClick={handleOpenBookOrbitLibrary}
+        />
+      )}
       <MenuItem
         label={appService?.isOnlineCatalogsAccessible ? _('Online Library') : _('OPDS Catalogs')}
         Icon={<LuLibrary className='h-5 w-5' />}

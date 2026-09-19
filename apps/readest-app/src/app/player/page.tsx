@@ -42,6 +42,10 @@ const PlayerRoute = () => {
   useTheme({ systemUIVisible: false });
 
   const id = searchParams?.get('id') ?? '';
+  // Opening the phone player is passive: it must not start audio before the
+  // transport is visible. Android Auto adds this explicit flag because a
+  // dashboard book selection is itself a play request.
+  const shouldAutoplay = searchParams?.get('autoplay') === '1';
 
   // Local copy, set once per genuine `id` change inside the effect below -
   // NOT a reactive subscription to the library store. Title/author/cover
@@ -171,13 +175,11 @@ const PlayerRoute = () => {
       // `.then()` can fire again for an ALREADY-SETTLED promise (StrictMode's
       // replay reattaches to it rather than racing a second claim - see the
       // ref comment above), so this can run well after the session was
-      // claimed. Gating on the controller's CURRENT state instead of a flag
-      // frozen at claim time is what makes that safe: 'stopped' only ever
-      // means "never started" for an AudiobookController (unlike TTS, it is
-      // not a transient mid-playback value here), so this fires start()
-      // exactly once, on first open, and never resumes audio the user has
-      // since paused.
-      if (result.controller.state === 'stopped') {
+      // claimed. Only an explicit Android Auto play request may auto-start,
+      // and it still gates on the controller's CURRENT state: 'stopped' means
+      // "never started" here, so a settled promise cannot resume audio the
+      // user has since paused.
+      if (shouldAutoplay && result.controller.state === 'stopped') {
         void result.controller.start();
       }
     });
@@ -186,7 +188,7 @@ const PlayerRoute = () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, libraryLoaded]);
+  }, [id, libraryLoaded, shouldAutoplay]);
 
   // A podcast episode's session ending (natural end, error, user stop) must
   // fall back to this show's episode list, not bounce the whole route to

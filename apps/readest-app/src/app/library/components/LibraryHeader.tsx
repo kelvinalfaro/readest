@@ -31,6 +31,7 @@ interface LibraryHeaderProps {
   onImportBooksFromDirectory?: () => void;
   onImportFromWebBrowser?: () => void;
   onOpenCWALibrary?: () => void;
+  onOpenBookOrbitLibrary?: () => void;
   onImportBookFromNovelUrl?: () => void;
   onOpenCatalogManager: () => void;
   onOpenFeeds: () => void;
@@ -53,6 +54,7 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
   onImportBooksFromDirectory,
   onImportFromWebBrowser,
   onOpenCWALibrary,
+  onOpenBookOrbitLibrary,
   onImportBookFromNovelUrl,
   onOpenCatalogManager,
   onOpenFeeds,
@@ -212,6 +214,7 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
                     onImportBooksFromDirectory={onImportBooksFromDirectory}
                     onImportFromWebBrowser={onImportFromWebBrowser}
                     onOpenCWALibrary={onOpenCWALibrary}
+                    onOpenBookOrbitLibrary={onOpenBookOrbitLibrary}
                     onImportBookFromNovelUrl={onImportBookFromNovelUrl}
                     onOpenCatalogManager={onOpenCatalogManager}
                     onOpenFeeds={onOpenFeeds}

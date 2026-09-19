@@ -2,6 +2,15 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-19 — Android Auto cold-start, transport, and artwork repair
+
+- Reworked a cold Android Auto book selection so the native service queues the selected hash, wakes the app through an explicit `PendingIntent` with current background-launch opt-ins, and drains the selection only after the WebView listener is registered. The persisted car-library model now includes audiobook identity for the fallback route.
+- The foreground media service now activates paused and waits for the real audiobook or TTS controller to report playback. This prevents Android Auto from showing a nonfunctional Pause button while the app/controller is still starting, and an early Pause cancels a selection that has not yet reached the WebView.
+- Replaced process-local cover counters with fresh temporary artwork URIs and seeds the selected book's cached thumbnail immediately, preventing Android Auto from reusing an older book cover after a process restart.
+- Phone audiobook routes no longer auto-start by default before the player is visible. Android Auto marks its deliberate play request with `autoplay=1`, preserving dashboard selection playback without surprise phone-app resume.
+- Added working CWA and BookOrbit Library entries to both library import menus. A single enabled BookOrbit SmartScope opens directly; otherwise the BookOrbit integration page provides scope discovery and per-scope Browse actions.
+- Validation passed: 78 focused Android Auto, media-session, player, and import-menu tests; TypeScript; targeted Biome checks; production frontend build; Android/Kotlin compilation; and native unit tests. Prepared patch release `0.12.21`; the full Tauri Android package still stops before native packaging because this workstation lacks MSVC `link.exe`, so the signed GitHub build and physical Android Auto cold-start/switch/cover acceptance remain required.
+
 ## 2026-09-18 — Android Auto selection and library artwork repair
 
 - Device acceptance confirmed that Readest appears in the Android Auto launcher and its Library node lists books, but selecting one ended with Android Auto's `Could not load your selection` message. The native media session had been marked inactive whenever no TTS session was already playing, so it could browse while rejecting a new playable-item command.

@@ -27,6 +27,7 @@ import type { ABSEpisode, ABSMediaProgress } from '@/types/audiobookshelf';
 // book's object reference, and checks the controller's CURRENT state before
 // calling start() instead of a flag frozen at claim time.
 const mocks = vi.hoisted(() => ({
+  searchParams: 'id=h1',
   openAudiobookSession: vi.fn(),
   loadAbsEpisodes: vi.fn(),
   getSessionByHash: vi.fn(() => null as { bookKey: string; controller: unknown } | null),
@@ -37,7 +38,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useSearchParams: () => new URLSearchParams('id=h1'),
+  useSearchParams: () => new URLSearchParams(mocks.searchParams),
 }));
 
 vi.mock('@/hooks/useAppRouter', () => ({
@@ -151,6 +152,7 @@ const episode2: ABSEpisode = { id: 'ep2', title: 'Episode Two', publishedAt: 100
 describe('PlayerPage under React StrictMode', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.searchParams = 'id=h1';
     mocks.getSessionByHash.mockReturnValue(null);
     mocks.sessionListeners.clear();
     useLibraryStore.getState().setLibrary([book]);
@@ -161,7 +163,7 @@ describe('PlayerPage under React StrictMode', () => {
     useLibraryStore.getState().setLibrary([]);
   });
 
-  it('resolves the session and renders the player through StrictMode double-invoked effects', async () => {
+  it('resolves the session without starting audio before the phone player is visible', async () => {
     const start = vi.fn().mockResolvedValue(undefined);
     mocks.openAudiobookSession.mockResolvedValue({
       bookKey: 'h1-abc123',
@@ -180,13 +182,33 @@ describe('PlayerPage under React StrictMode', () => {
     await waitFor(() => expect(screen.getByTestId('player-view')).toBeTruthy());
     expect(screen.getByTestId('player-view').textContent).toBe('h1-abc123');
 
-    // Exactly one open, and exactly one start() - not a second independent
-    // claim, and not a second (frozen-flag) resume - racing the first.
+    // Opening the player on the phone is passive; the visible Play control is
+    // the user's start gesture.
+    expect(mocks.openAudiobookSession).toHaveBeenCalledTimes(1);
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it('autoplays exactly once when Android Auto explicitly requests playback', async () => {
+    mocks.searchParams = 'id=h1&autoplay=1';
+    const start = vi.fn().mockResolvedValue(undefined);
+    mocks.openAudiobookSession.mockResolvedValue({
+      bookKey: 'h1-abc123',
+      controller: { kind: 'audiobook', state: 'stopped', start },
+    });
+
+    render(
+      <StrictMode>
+        <PlayerPage />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(screen.getByTestId('player-view')).toBeTruthy());
     expect(mocks.openAudiobookSession).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalledTimes(1);
   });
 
   it('does not resume playback when a library-store write hands the route a new book reference for the same hash', async () => {
+    mocks.searchParams = 'id=h1&autoplay=1';
     const start = vi.fn().mockResolvedValue(undefined);
     const controller: { kind: 'audiobook'; state: string; start: typeof start } = {
       kind: 'audiobook',
@@ -230,6 +252,7 @@ describe('PlayerPage under React StrictMode', () => {
 describe('PlayerPage with a podcast show', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.searchParams = 'id=h1';
     mocks.getSessionByHash.mockReturnValue(null);
     mocks.sessionListeners.clear();
     useLibraryStore.getState().setLibrary([podcastBook]);

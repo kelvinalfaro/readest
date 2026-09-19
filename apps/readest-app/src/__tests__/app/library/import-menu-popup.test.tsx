@@ -64,6 +64,19 @@ describe('ImportMenuPopup', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
+  it('opens the configured CWA and BookOrbit library destinations', () => {
+    const onOpenCWALibrary = vi.fn();
+    const onOpenBookOrbitLibrary = vi.fn();
+    const { onClose } = renderPopup({ onOpenCWALibrary, onOpenBookOrbitLibrary });
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'CWA Library' }));
+    expect(onOpenCWALibrary).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'BookOrbit Library' }));
+    expect(onOpenBookOrbitLibrary).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
   it('uses the OPDS label when curated online catalogs are unavailable', () => {
     useEnvMock.mockReturnValue({ appService: { isOnlineCatalogsAccessible: false } });
     renderPopup();

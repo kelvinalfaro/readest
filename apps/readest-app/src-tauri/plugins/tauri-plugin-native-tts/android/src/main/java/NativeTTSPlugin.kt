@@ -609,7 +609,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             MediaPlaybackService.saveLibrary(activity, args.booksJson ?: "[]")
             // Keep a process-local route from Android Auto selections back to
             // the WebView even while no TTS session is active.
-            MediaPlaybackService.pluginEventTrigger = { event, data -> trigger(event, data) }
+            MediaPlaybackService.setPluginEventTrigger { event, data -> trigger(event, data) }
             invoke.resolve()
         } catch (e: Exception) {
             invoke.reject("Failed to update Android Auto library: ${e.message}")
@@ -638,7 +638,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
                 // race, onStartCommand observes the newer inactive state and
                 // suppresses this delayed activation.
                 MediaPlaybackService.requestActivation(args.sessionId, args.bookHash)
-                MediaPlaybackService.pluginEventTrigger = { event, data -> trigger(event, data) }
+                MediaPlaybackService.setPluginEventTrigger { event, data -> trigger(event, data) }
                 // Persist the book so the Android Auto browse tree can offer a
                 // "Resume last book" entry after the process is cold.
                 args.bookHash?.let {
@@ -821,7 +821,7 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
             cancelIdleTimer()
 
             MediaPlaybackService.requestDeactivation()
-            MediaPlaybackService.pluginEventTrigger = null
+            MediaPlaybackService.setPluginEventTrigger(null)
 
             coroutineScope.cancel()
             initializationJob?.cancel()

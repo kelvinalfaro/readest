@@ -4,6 +4,7 @@ import com.readest.native_tts.R
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
@@ -43,6 +44,7 @@ internal data class AndroidAutoBook(
     val hash: String,
     val title: String,
     val author: String,
+    val isAudiobook: Boolean,
     val coverHash: String?,
     val artworkReady: Boolean,
 )
@@ -221,7 +223,39 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         private const val COVER_THUMBNAIL_CACHE_DIR = "cover-thumbnails/v1"
         private val MD5_PATTERN = Regex("^[0-9a-fA-F]{32}$")
 
-        var pluginEventTrigger: ((String, JSObject) -> Unit)? = null
+        @Volatile
+        private var pluginEventTrigger: ((String, JSObject) -> Unit)? = null
+        @Volatile
+        private var pendingBookHash: String? = null
+
+        fun setPluginEventTrigger(trigger: ((String, JSObject) -> Unit)?) {
+            val pending = synchronized(this) {
+                pluginEventTrigger = trigger
+                if (trigger == null) {
+                    null
+                } else {
+                    pendingBookHash.also { pendingBookHash = null }
+                }
+            }
+            if (pending != null && trigger != null) {
+                trigger("media-session-play-book", JSObject().apply { put("bookHash", pending) })
+            }
+        }
+
+        private fun dispatchOrQueueBookPlayback(hash: String): Boolean {
+            val trigger = synchronized(this) {
+                pendingBookHash = hash
+                pluginEventTrigger?.also { pendingBookHash = null }
+            }
+            trigger?.invoke("media-session-play-book", JSObject().apply { put("bookHash", hash) })
+            return trigger != null
+        }
+
+        private fun cancelPendingBookPlayback(): Boolean = synchronized(this) {
+            val hadPendingSelection = pendingBookHash != null
+            pendingBookHash = null
+            hadPendingSelection
+        }
 
         // Whether this service should hold the app's audio focus for the
         // current session. True for audio the app renders itself (the
@@ -314,6 +348,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                             hash = hash,
                             title = title,
                             author = item.optString("author").trim(),
+                            isAudiobook = item.optBoolean("isAudiobook", false),
                             coverHash = item.optString("coverHash")
                                 .trim()
                                 .takeIf { MD5_PATTERN.matches(it) },
@@ -483,21 +518,26 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 )
             }
 
-            // Silent keep-alive track: holds the audio route and drives the
-            // session's playing/paused state while the actual TTS audio comes
-            // from the WebView or the TextToSpeech engine.
+            // Silent keep-alive track: holds the audio route while the actual
+            // TTS audio comes from the WebView or TextToSpeech engine. Prepare
+            // it paused. The JS controller publishes PLAYING only after real
+            // audio starts, so Android Auto never shows a premature pause
+            // button that cannot control anything yet.
             val mediaItem = MediaItem.fromUri("asset:///silence.mp3")
             player.setMediaItem(mediaItem)
             player.repeatMode = Player.REPEAT_MODE_ONE
             player.prepare()
-            player.playWhenReady = true
+            player.playWhenReady = false
 
             mediaSession?.isActive = true
+            mediaSession?.setPlaybackState(
+                stateBuilder.setState(PlaybackStateCompat.STATE_PAUSED, currentPositionMs, 1f).build()
+            )
             notifyChildrenChanged(MEDIA_ROOT_ID)
         }
         // Always post the notification: activation arrives through
         // startForegroundService, which requires startForeground promptly.
-        showNotification(PlaybackStateCompat.STATE_PLAYING)
+        showNotification(PlaybackStateCompat.STATE_PAUSED)
     }
 
     private fun deactivateSession() {
@@ -539,6 +579,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             // resume-after-interruption.
             resumeOnFocusGain = false
             player.pause()
+            if (!sessionActive && cancelPendingBookPlayback()) {
+                mediaSession?.setPlaybackState(
+                    stateBuilder.setState(PlaybackStateCompat.STATE_PAUSED, currentPositionMs, 1f).build()
+                )
+                return
+            }
             pluginEventTrigger?.invoke("media-session-pause", JSObject())
             updatePlaybackState()
         }
@@ -586,7 +632,8 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 currentTitle = selectedBook.title
                 currentArtist = selectedBook.author
                 currentPositionMs = 0L
-                mediaSession?.setMetadata(buildLibraryBookMetadata(selectedBook))
+                currentBookHash = hash
+                resetArtworkForBook(hash)
             }
             // A playable-item request is asynchronous: the WebView still has
             // to open the book and initialize its saved reader/player state.
@@ -599,18 +646,52 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             // Normal case: the app process is alive in the background. Let the
             // global bridge select the book and start the existing ebook TTS or
             // audiobook player without trying to display phone UI in the car.
-            pluginEventTrigger?.let { trigger ->
-                trigger("media-session-play-book", JSObject().apply { put("bookHash", hash) })
-                return
-            }
+            if (dispatchOrQueueBookPlayback(hash)) return
 
-            // Cold process fallback: open the existing deep link. The reader
-            // consumes autoplay=tts after its library has hydrated.
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("readest://book/$hash?autoplay=tts"))
-                .setPackage(packageName)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Cold process fallback: wake the existing app through an explicit
+            // PendingIntent. Direct startActivity() calls from a bound media
+            // service are silently blocked by Android's background-activity
+            // launch rules on current releases. The queued book selection is
+            // delivered when the WebView republishes its media bridge.
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            } ?: Intent(Intent.ACTION_VIEW, Uri.parse(
+                if (selectedBook?.isAudiobook == true) "readest://book/$hash"
+                else "readest://book/$hash?autoplay=tts"
+            )).setPackage(packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
-                startActivity(intent)
+                val creatorOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                    ActivityOptions.makeBasic().apply {
+                        pendingIntentCreatorBackgroundActivityStartMode =
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    }.toBundle()
+                } else {
+                    null
+                }
+                val pendingIntent = PendingIntent.getActivity(
+                    this@MediaPlaybackService,
+                    hash.hashCode(),
+                    launchIntent,
+                    PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+                    creatorOptions,
+                )
+                val senderOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    ActivityOptions.makeBasic().apply {
+                        pendingIntentBackgroundActivityStartMode =
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                    }.toBundle()
+                } else {
+                    null
+                }
+                pendingIntent.send(
+                    this@MediaPlaybackService,
+                    0,
+                    null,
+                    null,
+                    null,
+                    null,
+                    senderOptions,
+                )
             } catch (e: Exception) {
                 Log.e("MediaPlaybackService", "Failed to launch reader for resume", e)
             }
@@ -642,7 +723,6 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     // Guards against rewriting the cache file on every (per-sentence) metadata
     // build: the URI is only re-published when the cover bitmap itself changes.
     private var artworkUriSource: Bitmap? = null
-    private var artworkUriVersion = 0
     private var artworkUriFile: File? = null
 
     private fun resetArtworkForBook(bookHash: String?) {
@@ -681,7 +761,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         val art = currentArtwork ?: return
         if (art !== artworkUriSource || currentArtworkUri == null) {
             try {
-                val file = File(cacheDir, "tts_cover_${artworkUriVersion++}.png")
+                // Android Auto caches artwork by URI. A counter restarted at
+                // zero after process death and reused tts_cover_0.png, so the
+                // car kept an older book's pixels. createTempFile preserves a
+                // fresh URI across both book switches and process restarts.
+                val bookPrefix = currentBookHash?.take(12) ?: "session"
+                val file = File.createTempFile("tts_cover_${bookPrefix}_", ".png", cacheDir)
                 FileOutputStream(file).use { out -> art.compress(Bitmap.CompressFormat.PNG, 100, out) }
                 artworkUriFile?.delete()
                 artworkUriFile = file

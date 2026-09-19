@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { addPluginListener, invoke, type PluginListener } from '@tauri-apps/api/core';
 import type { Book } from '@/types/book';
 import { useAppRouter } from '@/hooks/useAppRouter';
@@ -19,6 +19,7 @@ export interface AndroidAutoBook {
   hash: string;
   title: string;
   author: string;
+  isAudiobook: boolean;
   coverHash: string | null;
   artworkReady: boolean;
 }
@@ -37,13 +38,15 @@ export const getAndroidAutoLibraryBooks = (
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, MAX_ANDROID_AUTO_BOOKS)
-    .map(({ hash, title, author, coverHash }) => {
+    .map((book) => {
+      const { hash, title, author, coverHash } = book;
       const normalizedCoverHash = coverHash ?? null;
       const thumbnail = coverThumbnails.get(hash);
       return {
         hash,
         title,
         author,
+        isAudiobook: isAudiobook(book),
         coverHash: normalizedCoverHash,
         artworkReady: !!thumbnail && thumbnail.coverHash === normalizedCoverHash,
       };
@@ -54,6 +57,7 @@ const AndroidAutoLibraryBridge = () => {
   const library = useLibraryStore((state) => state.library);
   const libraryLoaded = useLibraryStore((state) => state.libraryLoaded);
   const coverThumbnails = useLibraryStore((state) => state.coverThumbnails);
+  const [selectionListenerReady, setSelectionListenerReady] = useState(false);
   const androidAutoBooks = useMemo(
     () => getAndroidAutoLibraryBooks(library, coverThumbnails),
     [coverThumbnails, library],
@@ -77,11 +81,17 @@ const AndroidAutoLibraryBridge = () => {
   }, [library, libraryLoaded]);
 
   useEffect(() => {
-    if (!libraryLoaded || !isTauriAppPlatform() || getOSPlatform() !== 'android') return;
+    if (
+      !libraryLoaded ||
+      !selectionListenerReady ||
+      !isTauriAppPlatform() ||
+      getOSPlatform() !== 'android'
+    )
+      return;
     void invoke('plugin:native-tts|update_media_library', {
       payload: { booksJson },
     }).catch((error) => console.warn('Failed to update Android Auto library:', error));
-  }, [booksJson, libraryLoaded]);
+  }, [booksJson, libraryLoaded, selectionListenerReady]);
 
   useEffect(() => {
     if (!isMainAppWindow() || !isTauriAppPlatform() || getOSPlatform() !== 'android') return;
@@ -97,7 +107,7 @@ const AndroidAutoLibraryBridge = () => {
         if (!book || book.deletedAt) return;
 
         if (isAudiobook(book)) {
-          router.push(`/player?id=${encodeURIComponent(bookHash)}`);
+          router.push(`/player?id=${encodeURIComponent(bookHash)}&autoplay=1`);
           return;
         }
 
@@ -114,6 +124,11 @@ const AndroidAutoLibraryBridge = () => {
           void registered.unregister();
         } else {
           listener = registered;
+          // update_media_library installs the native-to-WebView event bridge
+          // and drains any book selected while the process was cold. Publish
+          // only after this listener exists so that one-shot event cannot be
+          // lost during startup.
+          setSelectionListenerReady(true);
         }
       })
       .catch((error) => console.warn('Failed to listen for Android Auto selections:', error));
