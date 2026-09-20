@@ -11,7 +11,7 @@ Historical entries below preserve the status reported at the time; later entries
 - Replaced process-local cover counters with fresh temporary artwork URIs and seeds the selected book's cached thumbnail immediately, preventing Android Auto from reusing an older book cover after a process restart.
 - Phone audiobook routes no longer auto-start by default before the player is visible. Android Auto marks its deliberate play request with `autoplay=1`, preserving dashboard selection playback without surprise phone-app resume.
 - Added working CWA and BookOrbit Library entries to both library import menus. A single enabled BookOrbit SmartScope opens directly; otherwise the BookOrbit integration page provides scope discovery and per-scope Browse actions.
-- Validation for the follow-up passed 72 focused Android Auto, TTS-control, reader, and bridge tests; the full 11,225-test application suite; TypeScript; repository formatting and Biome checks; Android/Kotlin debug and release compilation; and native unit tests. A new signed APK and physical cold-start/TTS acceptance remain required.
+- Validation for the follow-up passed 72 focused Android Auto, TTS-control, reader, and bridge tests; the full 11,225-test application suite; TypeScript; repository formatting and Biome checks; Android/Kotlin debug and release compilation; and native unit tests. Prepared patch release `0.12.22`; a signed APK and physical cold-start/TTS acceptance remain required.
 
 ## 2026-09-18 — Android Auto selection and library artwork repair
 
