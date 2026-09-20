@@ -3,8 +3,10 @@ package com.readest.native_tts
 import org.w3c.dom.Node
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.StringReader
 import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
+import org.xml.sax.InputSource
 
 internal data class ColdEpubSpeech(
     val segments: List<ColdEpubSegment>,
@@ -148,10 +150,48 @@ internal object ColdEpubText {
 
     private fun parseXml(bytes: ByteArray) = DocumentBuilderFactory.newInstance().apply {
         isNamespaceAware = true
-        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-        setFeature("http://xml.org/sax/features/external-general-entities", false)
-        setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-    }.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
+        isExpandEntityReferences = false
+        setFeatureIfSupported("http://xml.org/sax/features/external-general-entities", false)
+        setFeatureIfSupported("http://xml.org/sax/features/external-parameter-entities", false)
+        setFeatureIfSupported("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+    }.newDocumentBuilder().apply {
+        setEntityResolver { _, _ -> InputSource(StringReader("")) }
+    }.parse(ByteArrayInputStream(withoutDoctype(bytes)))
+
+    private fun DocumentBuilderFactory.setFeatureIfSupported(name: String, enabled: Boolean) {
+        try {
+            setFeature(name, enabled)
+        } catch (_: Exception) {
+            // Android's Harmony parser supports fewer feature flags than the
+            // desktop JAXP implementation. The explicit resolver and DOCTYPE
+            // removal below keep external entities disabled on both runtimes.
+        }
+    }
+
+    private fun withoutDoctype(bytes: ByteArray): ByteArray {
+        val xml = bytes.toString(Charsets.UTF_8)
+        val start = xml.indexOf("<!DOCTYPE", ignoreCase = true)
+        if (start < 0) return bytes
+
+        var quote: Char? = null
+        var subsetDepth = 0
+        for (index in start + 9 until xml.length) {
+            val char = xml[index]
+            if (quote != null) {
+                if (char == quote) quote = null
+                continue
+            }
+            when (char) {
+                '\'', '"' -> quote = char
+                '[' -> subsetDepth += 1
+                ']' -> if (subsetDepth > 0) subsetDepth -= 1
+                '>' -> if (subsetDepth == 0) {
+                    return xml.removeRange(start, index + 1).toByteArray(Charsets.UTF_8)
+                }
+            }
+        }
+        error("XML contains an unterminated DOCTYPE")
+    }
 
     private fun resolveZipPath(base: String, href: String): String {
         val decoded = try {

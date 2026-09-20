@@ -46,7 +46,7 @@ class ColdEpubTextTest {
             }
             add(
                 "META-INF/container.xml",
-                """<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>""",
+                """<?xml version="1.0"?><!DOCTYPE container SYSTEM "https://example.invalid/container.dtd"><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>""",
             )
             add(
                 "OEBPS/content.opf",
