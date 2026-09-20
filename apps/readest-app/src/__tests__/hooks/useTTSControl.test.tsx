@@ -52,6 +52,7 @@ let mockProgress = {
   range: null as Range | null,
   sectionLabel: '',
 };
+let mockProgressReady = true;
 
 const mockViewSettings = {
   ttsLocation: null as string | null,
@@ -76,7 +77,7 @@ vi.mock('@/store/readerStore', () => {
     hoveredBookKey: null,
     bookKeys: ['book-1'],
     getView: () => mockView,
-    getProgress: () => mockProgress,
+    getProgress: () => (mockProgressReady ? mockProgress : null),
     getViewSettings: () => mockViewSettings,
     setViewSettings: vi.fn(),
     setTTSEnabled: vi.fn(),
@@ -116,8 +117,8 @@ vi.mock('@/store/bookDataStore', () => {
 
 // useTTSControl now reads progress reactively from readerProgressStore.
 vi.mock('@/store/readerProgressStore', () => ({
-  useBookProgress: () => mockProgress,
-  getBookProgress: () => mockProgress,
+  useBookProgress: () => (mockProgressReady ? mockProgress : null),
+  getBookProgress: () => (mockProgressReady ? mockProgress : null),
 }));
 
 vi.mock('@/store/proofreadStore', () => ({
@@ -305,6 +306,7 @@ import { ttsMediaBridge } from '@/services/tts/ttsMediaBridge';
 import { eventDispatcher } from '@/utils/event';
 import { pageBreakFraction } from '@/utils/ttsPageFollow';
 import { useReaderStore } from '@/store/readerStore';
+import { setPendingTTSAutoplay } from '@/utils/ttsAutoplay';
 
 const getSetTTSEnabledMock = () =>
   (
@@ -322,6 +324,45 @@ const SectionIndexHarness = () => {
   const { ttsSectionIndex } = useTTSControl({ bookKey: 'book-1' });
   return <output data-testid='tts-section-index'>{ttsSectionIndex ?? 'none'}</output>;
 };
+
+describe('useTTSControl Android Auto autoplay', () => {
+  beforeEach(() => {
+    ttsControllerInstances.length = 0;
+    pendingInitResolvers.length = 0;
+    mockProgressReady = true;
+    setPendingTTSAutoplay(null);
+  });
+
+  afterEach(() => {
+    cleanup();
+    setPendingTTSAutoplay(null);
+  });
+
+  it('keeps a pending request until the owning TTS control has progress', async () => {
+    mockProgressReady = false;
+    setPendingTTSAutoplay('book');
+    const { rerender } = render(<Harness />);
+
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+    expect(ttsControllerInstances).toHaveLength(0);
+
+    mockProgressReady = true;
+    rerender(<Harness />);
+
+    await act(async () => {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+    });
+
+    expect(ttsControllerInstances).toHaveLength(1);
+
+    await act(async () => {
+      while (pendingInitResolvers.length > 0) pendingInitResolvers.shift()!();
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+  });
+});
 
 describe('useTTSControl section cursor', () => {
   beforeEach(() => {

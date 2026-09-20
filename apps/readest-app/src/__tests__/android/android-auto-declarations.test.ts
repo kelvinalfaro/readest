@@ -76,9 +76,14 @@ describe('Android Auto declarations (#3919)', () => {
     expect(mediaPlaybackService).toContain('PlaybackStateCompat.STATE_BUFFERING');
     expect(mediaPlaybackService).toContain('.setIconUri(libraryArtworkUri(book))');
     expect(mediaPlaybackService).toContain('pendingIntentBackgroundActivityStartMode');
+    expect(mediaPlaybackService).toContain(
+      'ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS',
+    );
     expect(mediaPlaybackService).toContain('dispatchOrQueueBookPlayback(hash)');
     expect(androidAutoBridge).toContain('selectionListenerReady');
     expect(androidAutoBridge).toContain('&autoplay=1');
+    expect(androidAutoBridge).toContain("'media-session-pause'");
+    expect(androidAutoBridge).toContain('setPendingTTSAutoplay(null)');
     expect(nativeTTSPlugin).toContain('fun update_media_library');
   });
 
@@ -90,6 +95,8 @@ describe('Android Auto declarations (#3919)', () => {
     expect(activateBlock).toContain('player.playWhenReady = false');
     expect(activateBlock).toContain('PlaybackStateCompat.STATE_PAUSED');
     expect(mediaPlaybackService).toContain('File.createTempFile("tts_cover_');
+    expect(mediaPlaybackService).toContain('if (!sessionActive)');
+    expect(mediaPlaybackService).toContain('onPlayFromMediaId("$BOOK_MEDIA_ID_PREFIX$hash", null)');
   });
 
   it('keeps the browsing media session active while playback is stopped', () => {

@@ -96,34 +96,41 @@ const AndroidAutoLibraryBridge = () => {
   useEffect(() => {
     if (!isMainAppWindow() || !isTauriAppPlatform() || getOSPlatform() !== 'android') return;
 
-    let listener: PluginListener | undefined;
+    let listeners: PluginListener[] = [];
     let cancelled = false;
-    void addPluginListener(
-      'native-tts',
-      'media-session-play-book',
-      ({ bookHash }: { bookHash?: string }) => {
-        if (!bookHash) return;
-        const book = useLibraryStore.getState().getBookByHash(bookHash);
-        if (!book || book.deletedAt) return;
+    void Promise.all([
+      addPluginListener(
+        'native-tts',
+        'media-session-play-book',
+        ({ bookHash }: { bookHash?: string }) => {
+          if (!bookHash) return;
+          const book = useLibraryStore.getState().getBookByHash(bookHash);
+          if (!book || book.deletedAt) return;
 
-        if (isAudiobook(book)) {
-          router.push(`/player?id=${encodeURIComponent(bookHash)}&autoplay=1`);
-          return;
-        }
+          if (isAudiobook(book)) {
+            router.push(`/player?id=${encodeURIComponent(bookHash)}&autoplay=1`);
+            return;
+          }
 
-        setPendingTTSAutoplay(bookHash);
-        if (window.location.pathname.startsWith('/reader')) {
-          eventDispatcher.dispatch('open-book-in-reader', { bookHash });
-        } else {
-          navigateToReader(router, [bookHash]);
-        }
-      },
-    )
+          setPendingTTSAutoplay(bookHash);
+          if (window.location.pathname.startsWith('/reader')) {
+            eventDispatcher.dispatch('open-book-in-reader', { bookHash });
+          } else {
+            navigateToReader(router, [bookHash]);
+          }
+        },
+      ),
+      // Before a controller exists, the ordinary media-session handler has
+      // nothing to pause. Cancel the queued one-shot start explicitly.
+      addPluginListener('native-tts', 'media-session-pause', () => {
+        setPendingTTSAutoplay(null);
+      }),
+    ])
       .then((registered) => {
         if (cancelled) {
-          void registered.unregister();
+          for (const listener of registered) void listener.unregister();
         } else {
-          listener = registered;
+          listeners = registered;
           // update_media_library installs the native-to-WebView event bridge
           // and drains any book selected while the process was cold. Publish
           // only after this listener exists so that one-shot event cannot be
@@ -135,7 +142,7 @@ const AndroidAutoLibraryBridge = () => {
 
     return () => {
       cancelled = true;
-      void listener?.unregister();
+      for (const listener of listeners) void listener.unregister();
     };
   }, [router]);
 

@@ -27,6 +27,11 @@ import { getLocale } from '@/utils/misc';
 import { estimateTTSTime } from '@/utils/ttsTime';
 import { pageBreakFraction } from '@/utils/ttsPageFollow';
 import { getTextSubRange, rangeTextExcludingInert } from '@/services/tts/wordHighlight';
+import {
+  consumePendingTTSAutoplay,
+  hasPendingTTSAutoplay,
+  subscribePendingTTSAutoplay,
+} from '@/utils/ttsAutoplay';
 import { releaseUnblockAudio, ttsMediaBridge, unblockAudio } from '@/services/tts/ttsMediaBridge';
 import {
   asTTSController,
@@ -652,6 +657,30 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
   // Reactive subscription via readerProgressStore so the effect below
   // re-runs on page turns without dragging in the whole readerStore.
   const progress = useBookProgress(bookKey);
+
+  // Android Auto can request Read Aloud before this per-book control exists,
+  // or while the view is initialized but its first location/progress has not
+  // landed yet. Keep the one-shot request pending until the component that
+  // actually owns `tts-speak` has every prerequisite. This also handles an
+  // already-open book immediately through the module subscription.
+  const startPendingTTSAutoplay = useCallback(() => {
+    const bookHash = getBookHashFromKey(bookKey);
+    if (!hasPendingTTSAutoplay(bookHash)) return;
+    const view = getView(bookKey);
+    const currentProgress = getProgress(bookKey);
+    const viewSettings = getViewSettings(bookKey);
+    const bookData = getBookData(bookKey);
+    if (!view || !currentProgress || !viewSettings || !bookData?.book) return;
+    if (!consumePendingTTSAutoplay(bookHash)) return;
+    void eventDispatcher.dispatch('tts-speak', { bookKey });
+  }, [bookKey, getBookData, getProgress, getView, getViewSettings]);
+
+  useEffect(() => subscribePendingTTSAutoplay(startPendingTTSAutoplay), [startPendingTTSAutoplay]);
+
+  useEffect(() => {
+    startPendingTTSAutoplay();
+  }, [progress, startPendingTTSAutoplay]);
+
   useEffect(() => {
     const ttsController = ttsControllerRef.current;
     if (!ttsController) return;

@@ -564,6 +564,13 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     private inner class SessionCallback : MediaSessionCompat.Callback() {
         override fun onPlay() {
+            if (!sessionActive) {
+                val hash = currentBookHash ?: lastBookHash
+                if (hash != null) {
+                    onPlayFromMediaId("$BOOK_MEDIA_ID_PREFIX$hash", null)
+                    return
+                }
+            }
             // A route may have changed while paused (Bluetooth headphones to
             // Android Auto, or the reverse). Re-requesting focus immediately
             // before playback makes Android bind this session to the current
@@ -579,7 +586,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             // resume-after-interruption.
             resumeOnFocusGain = false
             player.pause()
-            if (!sessionActive && cancelPendingBookPlayback()) {
+            if (!sessionActive) {
+                cancelPendingBookPlayback()
+                // The selection may already have crossed into the WebView's
+                // readiness queue. Relay Pause there as well so it cannot
+                // auto-start after the driver has cancelled it.
+                pluginEventTrigger?.invoke("media-session-pause", JSObject())
                 mediaSession?.setPlaybackState(
                     stateBuilder.setState(PlaybackStateCompat.STATE_PAUSED, currentPositionMs, 1f).build()
                 )
@@ -663,7 +675,16 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 val creatorOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                     ActivityOptions.makeBasic().apply {
                         pendingIntentCreatorBackgroundActivityStartMode =
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                                // Android 16 split the old ALLOWED mode. Android
+                                // Auto is a connected-device initiated action,
+                                // so the cold launch needs the companion-style
+                                // privilege that can start while the phone UI is
+                                // not visible.
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+                            } else {
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                            }
                     }.toBundle()
                 } else {
                     null
@@ -675,10 +696,15 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                     PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                     creatorOptions,
                 )
+                Log.i("MediaPlaybackService", "Sending cold Android Auto launch for $hash")
                 val senderOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     ActivityOptions.makeBasic().apply {
                         pendingIntentBackgroundActivityStartMode =
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_ALWAYS
+                            } else {
+                                ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                            }
                     }.toBundle()
                 } else {
                     null
@@ -692,6 +718,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                     null,
                     senderOptions,
                 )
+                Log.i("MediaPlaybackService", "Cold Android Auto launch sent for $hash")
             } catch (e: Exception) {
                 Log.e("MediaPlaybackService", "Failed to launch reader for resume", e)
             }

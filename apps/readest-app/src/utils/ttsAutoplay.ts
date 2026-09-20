@@ -4,9 +4,20 @@
 // view has inited to start read-aloud. Module-scoped so it survives the
 // library -> reader navigation (like the deep-link cold-start guards).
 let pendingHash: string | null = null;
+const listeners = new Set<() => void>();
 
 export const setPendingTTSAutoplay = (hash: string | null): void => {
   pendingHash = hash;
+  if (hash) {
+    for (const listener of [...listeners]) listener();
+  }
+};
+
+export const hasPendingTTSAutoplay = (hash: string): boolean => pendingHash === hash;
+
+export const subscribePendingTTSAutoplay = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
 };
 
 // Returns true exactly once for the matching hash, then clears the request.
