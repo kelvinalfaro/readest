@@ -12,6 +12,7 @@ Historical entries below preserve the status reported at the time; later entries
 - Phone audiobook routes no longer auto-start by default before the player is visible. Android Auto marks its deliberate play request with `autoplay=1`, preserving dashboard selection playback without surprise phone-app resume.
 - Added working CWA and BookOrbit Library entries to both library import menus. A single enabled BookOrbit SmartScope opens directly; otherwise the BookOrbit integration page provides scope discovery and per-scope Browse actions.
 - Validation for the follow-up passed 72 focused Android Auto, TTS-control, reader, and bridge tests; the full 11,225-test application suite; TypeScript; repository formatting and Biome checks; Android/Kotlin debug and release compilation; and native unit tests. Prepared patch release `0.12.22`; a signed APK and physical cold-start/TTS acceptance remain required.
+- Pushed the repair and `0.12.22` release commits through `9c49148`, then dispatched signed Android release workflow run `35487536544` with shared `latest.json` publication enabled. Kelvin is monitoring the build and will perform the physical Android Auto acceptance test.
 
 ## 2026-09-18 — Android Auto selection and library artwork repair
 
