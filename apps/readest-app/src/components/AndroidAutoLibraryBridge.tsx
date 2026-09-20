@@ -12,6 +12,7 @@ import { setPendingTTSAutoplay } from '@/utils/ttsAutoplay';
 import { navigateToReader } from '@/utils/nav';
 import { eventDispatcher } from '@/utils/event';
 import { isMainAppWindow } from '@/utils/window';
+import { getConfigFilename } from '@/utils/book';
 
 const MAX_ANDROID_AUTO_BOOKS = 100;
 
@@ -20,8 +21,14 @@ export interface AndroidAutoBook {
   title: string;
   author: string;
   isAudiobook: boolean;
+  format: Book['format'];
   coverHash: string | null;
   artworkReady: boolean;
+}
+
+interface AndroidAutoPlaybackSource {
+  sourcePath: string | null;
+  configPath: string | null;
 }
 
 type CoverThumbnail = { coverHash: string | null; url: string };
@@ -47,6 +54,7 @@ export const getAndroidAutoLibraryBooks = (
         title,
         author,
         isAudiobook: isAudiobook(book),
+        format: book.format,
         coverHash: normalizedCoverHash,
         artworkReady: !!thumbnail && thumbnail.coverHash === normalizedCoverHash,
       };
@@ -58,9 +66,21 @@ const AndroidAutoLibraryBridge = () => {
   const libraryLoaded = useLibraryStore((state) => state.libraryLoaded);
   const coverThumbnails = useLibraryStore((state) => state.coverThumbnails);
   const [selectionListenerReady, setSelectionListenerReady] = useState(false);
-  const androidAutoBooks = useMemo(
+  const [playbackSources, setPlaybackSources] = useState<Map<string, AndroidAutoPlaybackSource>>(
+    new Map(),
+  );
+  const baseAndroidAutoBooks = useMemo(
     () => getAndroidAutoLibraryBooks(library, coverThumbnails),
     [coverThumbnails, library],
+  );
+  const androidAutoBooks = useMemo(
+    () =>
+      baseAndroidAutoBooks.map((book) => ({
+        ...book,
+        sourcePath: playbackSources.get(book.hash)?.sourcePath ?? null,
+        configPath: playbackSources.get(book.hash)?.configPath ?? null,
+      })),
+    [baseAndroidAutoBooks, playbackSources],
   );
   const booksJson = useMemo(() => JSON.stringify(androidAutoBooks), [androidAutoBooks]);
 
@@ -78,6 +98,31 @@ const AndroidAutoLibraryBridge = () => {
         if (selectedHashes.has(book.hash)) appService.requestCoverThumbnail(book);
       }
     }
+  }, [library, libraryLoaded]);
+
+  useEffect(() => {
+    if (!libraryLoaded || !isTauriAppPlatform() || getOSPlatform() !== 'android') return;
+    const appService = getInitializedAppService();
+    if (!appService) return;
+
+    let cancelled = false;
+    void Promise.all(
+      getAndroidAutoLibraryBooks(library).map(async ({ hash }) => {
+        const book = library.find((candidate) => candidate.hash === hash);
+        if (!book) return [hash, { sourcePath: null, configPath: null }] as const;
+        const [sourcePath, configPath] = await Promise.all([
+          appService.resolveNativeBookFilePath(book),
+          appService.resolveFilePath(getConfigFilename(book), 'Books').catch(() => null),
+        ]);
+        return [hash, { sourcePath, configPath }] as const;
+      }),
+    ).then((entries) => {
+      if (!cancelled) setPlaybackSources(new Map(entries));
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [library, libraryLoaded]);
 
   useEffect(() => {

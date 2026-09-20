@@ -87,6 +87,17 @@ describe('Android Auto declarations (#3919)', () => {
     expect(nativeTTSPlugin).toContain('fun update_media_library');
   });
 
+  it('starts cold EPUB speech inside the media service without requiring the phone activity', () => {
+    expect(mediaPlaybackService).toContain('ACTION_START_COLD_EPUB');
+    expect(mediaPlaybackService).toContain('activateColdEpubPlayback(hash)');
+    expect(mediaPlaybackService).toContain('ColdEpubText.read(source, config.cfi)');
+    expect(mediaPlaybackService).toContain('TextToSpeech(applicationContext)');
+    expect(mediaPlaybackService).toContain('handoffColdTtsToWebView(pending)');
+    expect(mediaPlaybackService).toContain('File(applicationInfo.dataDir, "Readest/Books/');
+    expect(androidAutoBridge).toContain('resolveNativeBookFilePath(book)');
+    expect(androidAutoBridge).toContain('getConfigFilename(book)');
+  });
+
   it('waits for real audio before reporting playback and uses fresh artwork URIs', () => {
     const activateBlock = mediaPlaybackService.slice(
       mediaPlaybackService.indexOf('private fun activateSession()'),

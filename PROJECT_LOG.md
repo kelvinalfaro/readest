@@ -2,6 +2,14 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-20 — Android Auto service-owned cold EPUB playback
+
+- Captured the failure live from the connected phone and car. Android Auto successfully delivered `playFromMediaId`, Play, and Pause commands and temporarily allowlisted Readest for a foreground service, but no Readest activity was launched; the media session only alternated between Buffering and Paused. This confirmed that the car connection and browse layer worked while the cold WebView/activity handoff could not start speech.
+- Added a cold EPUB path owned by `MediaPlaybackService`: it resolves the selected local book and saved TTS location/rate, extracts bounded speech segments from the EPUB spine, starts Android `TextToSpeech` as foreground media playback, and handles car Play, Pause, Previous, Next, audio focus, route loss, initialization timeout, and explicit error state without requiring the phone activity.
+- Preserved warm-app behavior. If Readest is subsequently opened, the service stops native cold speech and hands the queued selection to the normal reader/TTS controller. Section-level TTS progress is written back to the existing book config so the handoff resumes near the car playback location.
+- Added an upgrade fallback for the `0.12.22` persisted Android Auto library, which predates native source-path metadata: validated managed EPUB hashes resolve directly under Android AppData, so an update can be tested from the car without first launching the new phone build. Newly published library records also carry format, source path, and config path for managed and external books.
+- Prepared release `0.12.23`. Validation passed the full 11,226-test application suite (16 skipped), focused Android Auto tests, TypeScript and Biome across 2,410 files, Kotlin debug compilation, native unit tests, and diff checks. Kelvin authorized pushing the update and publishing signed updater metadata; the GitHub build and physical cold-start acceptance are the remaining gates.
+
 ## 2026-09-19 — Android Auto cold-start, transport, and artwork repair
 
 - Updated both Husky hooks to launch the repository-pinned pnpm through Corepack. This avoids Git Bash failing to resolve the Windows-only `pnpm.cmd` shim while retaining the existing pre-commit and pre-push checks.
