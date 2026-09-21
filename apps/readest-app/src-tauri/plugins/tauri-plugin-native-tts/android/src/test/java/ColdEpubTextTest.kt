@@ -20,6 +20,32 @@ class ColdEpubTextTest {
                 speech.segments.map { it.text },
             )
             assertTrue(speech.segments.all { it.sectionIndex == 1 })
+            assertTrue(speech.segments.all { it.cfi == "epubcfi(/6/4!/4/2/1:0)" })
+        } finally {
+            epub.delete()
+        }
+    }
+
+    @Test
+    fun resumesAtSavedTextOffsetInsideSpineSection() {
+        val epub = createEpub()
+        try {
+            val speech = ColdEpubText.read(epub, "epubcfi(/6/4!/4/4/1:7)")
+
+            assertEquals(1, speech.startSection)
+            assertEquals(listOf("section text."), speech.segments.map { it.text })
+        } finally {
+            epub.delete()
+        }
+    }
+
+    @Test
+    fun resumesAtStartOfSavedRangeInsideSpineSection() {
+        val epub = createEpub()
+        try {
+            val speech = ColdEpubText.read(epub, "epubcfi(/6/4!/4/4,/1:7,/1:14)")
+
+            assertEquals(listOf("section text."), speech.segments.map { it.text })
         } finally {
             epub.delete()
         }
@@ -58,7 +84,7 @@ class ColdEpubTextTest {
             )
             add(
                 "OEBPS/two.xhtml",
-                """<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Chapter Two</h1><p>Second section text.</p></body></html>""",
+                """<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Two</title></head><body><h1>Chapter Two</h1><p>Second section text.</p></body></html>""",
             )
         }
         return file

@@ -111,7 +111,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     private var coldTtsSegments: List<ColdEpubSegment> = emptyList()
     private var coldTtsBookHash: String? = null
     private var coldTtsConfigPath: String? = null
-    private var coldTtsSavedSection = -1
+    private var coldTtsSavedCfi: String? = null
 
     // True only between session activation (TTS playback started) and
     // deactivation. Android Auto can bind this service at any time to browse,
@@ -641,7 +641,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         coldTtsSegments = emptyList()
         coldTtsBookHash = hash
         coldTtsConfigPath = paths.configPath
-        coldTtsSavedSection = -1
+        coldTtsSavedCfi = null
 
         currentBookHash = hash
         currentTitle = book.title
@@ -798,7 +798,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     private fun speakCurrentColdTtsSegment() {
         val engine = coldTts ?: return
         val segment = coldTtsSegments.getOrNull(coldTtsIndex) ?: return
-        persistColdTtsSection(segment.sectionIndex)
+        persistColdTtsLocation(segment.cfi)
         if (ownsAudioFocus) requestFocus()
         player.play()
         mediaSession?.setPlaybackState(
@@ -817,9 +817,9 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     private fun isCurrentColdUtterance(utteranceId: String?): Boolean =
         utteranceId == "$coldTtsGeneration:$coldTtsIndex" && coldTtsActive
 
-    private fun persistColdTtsSection(sectionIndex: Int) {
-        if (sectionIndex == coldTtsSavedSection) return
-        coldTtsSavedSection = sectionIndex
+    private fun persistColdTtsLocation(cfi: String) {
+        if (cfi == coldTtsSavedCfi) return
+        coldTtsSavedCfi = cfi
         val path = coldTtsConfigPath ?: return
         try {
             val file = File(path)
@@ -828,7 +828,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             val viewSettings = json.optJSONObject("viewSettings") ?: JSONObject().also {
                 json.put("viewSettings", it)
             }
-            viewSettings.put("ttsLocation", "epubcfi(/6/${(sectionIndex + 1) * 2})")
+            viewSettings.put("ttsLocation", cfi)
             file.writeText(json.toString())
         } catch (error: Exception) {
             Log.w("MediaPlaybackService", "Cold EPUB location persistence failed", error)
@@ -886,7 +886,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         coldTtsSegments = emptyList()
         coldTtsBookHash = null
         coldTtsConfigPath = null
-        coldTtsSavedSection = -1
+        coldTtsSavedCfi = null
         coldTts?.stop()
         coldTts?.shutdown()
         coldTts = null
@@ -1427,16 +1427,29 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 }
             }
             Intent.ACTION_MEDIA_BUTTON -> {
-                if (sessionActive) {
-                    MediaButtonReceiver.handleIntent(mediaSession, intent)
-                } else {
-                    // MediaButtonReceiver cold-starts this service with
-                    // startForegroundService; honor the foreground contract,
-                    // then back out — there is no TTS session to control.
+                if (!sessionActive) {
+                    // MediaButtonReceiver cold-starts this service specifically
+                    // so the last media session can process Play and resume
+                    // without an Activity. Satisfy the foreground contract
+                    // before dispatching; onPlay() will select the persisted
+                    // last book and start service-owned EPUB speech.
                     showNotification(PlaybackStateCompat.STATE_PAUSED)
-                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                    stopSelf(startId)
                 }
+                MediaButtonReceiver.handleIntent(mediaSession, intent)
+                mainHandler.postDelayed({
+                    // Pause/stop delivered to a cold session has no playback
+                    // work to keep alive. A Play command will synchronously
+                    // enqueue ACTION_START_COLD_EPUB (or wake the Activity),
+                    // so give that command time to activate before cleaning
+                    // up the receiver-started foreground service.
+                    if (!sessionActive && !coldTtsActive) {
+                        ServiceCompat.stopForeground(
+                            this,
+                            ServiceCompat.STOP_FOREGROUND_REMOVE,
+                        )
+                        stopSelfResult(startId)
+                    }
+                }, 1_000L)
             }
         }
 

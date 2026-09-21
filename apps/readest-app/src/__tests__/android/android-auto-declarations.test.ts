@@ -94,6 +94,10 @@ describe('Android Auto declarations (#3919)', () => {
     expect(mediaPlaybackService).toContain('TextToSpeech(applicationContext)');
     expect(mediaPlaybackService).toContain('handoffColdTtsToWebView(pending)');
     expect(mediaPlaybackService).toContain('File(applicationInfo.dataDir, "Readest/Books/');
+    expect(mediaPlaybackService).toContain('persistColdTtsLocation(segment.cfi)');
+    expect(mediaPlaybackService).toContain(
+      'MediaButtonReceiver.handleIntent(mediaSession, intent)',
+    );
     expect(androidAutoBridge).toContain('resolveNativeBookFilePath(book)');
     expect(androidAutoBridge).toContain('getConfigFilename(book)');
   });

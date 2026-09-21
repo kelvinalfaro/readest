@@ -206,6 +206,15 @@ export class TauriMediaSession {
         throw error;
       }
       if (this.sessionId !== sessionId) return;
+      // Register transport listeners before optional notification permission
+      // work. Cold playback can already be audible when the Activity opens,
+      // and a driver's first Pause must not disappear during this setup gap.
+      try {
+        await this.initializeListeners(sessionId);
+      } catch (error) {
+        console.warn('Media session listener init failed:', error);
+      }
+      if (this.sessionId !== sessionId) return;
       // The foreground-service media notification IS the lock-screen control;
       // on Android 13+ it is silently suppressed unless POST_NOTIFICATIONS is
       // granted. Request it on every activation (no-op once decided).
@@ -217,12 +226,6 @@ export class TauriMediaSession {
         console.warn('POST_NOTIFICATIONS request failed:', error);
       }
       if (this.sessionId !== sessionId) return;
-      // Listener registration is optional and may stall or fail independently.
-      try {
-        await this.initializeListeners(sessionId);
-      } catch (error) {
-        console.warn('Media session listener init failed:', error);
-      }
       return;
     }
 

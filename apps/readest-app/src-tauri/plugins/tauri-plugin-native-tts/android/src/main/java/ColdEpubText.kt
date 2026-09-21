@@ -13,7 +13,11 @@ internal data class ColdEpubSpeech(
     val startSection: Int,
 )
 
-internal data class ColdEpubSegment(val text: String, val sectionIndex: Int)
+internal data class ColdEpubSegment(
+    val text: String,
+    val sectionIndex: Int,
+    val cfi: String,
+)
 
 /**
  * Small, service-safe EPUB text reader used only when Android Auto starts
@@ -66,9 +70,11 @@ internal object ColdEpubText {
         val segments = buildList {
             for (sectionIndex in startSection..spinePaths.lastIndex) {
                 val entry = zip.getEntry(spinePaths[sectionIndex]) ?: continue
+                val sectionCfi = "epubcfi(/6/${(sectionIndex + 1) * 2})"
+                val sectionResumeCfi = resumeCfi.takeIf { sectionIndex == startSection }
                 addAll(
-                    extractSegments(zip.getInputStream(entry).readBytes()).map {
-                        ColdEpubSegment(it, sectionIndex)
+                    extractSegments(zip.getInputStream(entry).readBytes(), sectionResumeCfi).map {
+                        ColdEpubSegment(it, sectionIndex, sectionResumeCfi ?: sectionCfi)
                     }
                 )
             }
@@ -85,11 +91,15 @@ internal object ColdEpubText {
         return (packageStep / 2 - 1).coerceAtLeast(0)
     }
 
-    private fun extractSegments(bytes: ByteArray): List<String> {
+    private fun extractSegments(bytes: ByteArray, resumeCfi: String?): List<String> {
         val text = try {
             val document = parseXml(bytes)
             val body = document.getElementsByTagNameNS("*", "body").item(0) ?: document.documentElement
-            buildString { appendNodeText(body, this) }
+            val anchor = resumeCfi?.let { resolveLocalCfi(document.documentElement, it) }
+            val output = StringBuilder()
+            val anchorOffset = intArrayOf(-1)
+            appendNodeText(body, output, anchor, anchorOffset)
+            output.substring(anchorOffset[0].takeIf { it >= 0 } ?: 0)
         } catch (_: Exception) {
             // EPUB requires XHTML, but tolerate old books with HTML-ish markup.
             bytes.toString(Charsets.UTF_8)
@@ -134,7 +144,23 @@ internal object ColdEpubText {
         if (pending.isNotEmpty()) yield(pending.toString())
     }
 
-    private fun appendNodeText(node: Node, output: StringBuilder) {
+    private data class TextAnchor(val node: Node, val offset: Int)
+
+    private fun appendNodeText(
+        node: Node,
+        output: StringBuilder,
+        anchor: TextAnchor?,
+        anchorOffset: IntArray,
+    ) {
+        if (anchorOffset[0] < 0 && node === anchor?.node) {
+            anchorOffset[0] = output.length + if (
+                node.nodeType == Node.TEXT_NODE || node.nodeType == Node.CDATA_SECTION_NODE
+            ) {
+                anchor.offset.coerceIn(0, node.nodeValue?.length ?: 0)
+            } else {
+                0
+            }
+        }
         when (node.nodeType) {
             Node.TEXT_NODE, Node.CDATA_SECTION_NODE -> output.append(node.nodeValue)
             Node.ELEMENT_NODE -> {
@@ -142,10 +168,129 @@ internal object ColdEpubText {
                 if (name in setOf("script", "style", "svg", "math")) return
                 if (name in blockElements) output.append('\n')
                 val children = node.childNodes
-                for (index in 0 until children.length) appendNodeText(children.item(index), output)
+                for (index in 0 until children.length) {
+                    appendNodeText(children.item(index), output, anchor, anchorOffset)
+                }
                 if (name in blockElements) output.append('\n')
             }
         }
+    }
+
+    /**
+     * Resolve the content-document half of a Readest/foliate EPUB CFI. EPUB
+     * CFI numbers both elements and the text chunks between them; adjacent
+     * text nodes therefore share one odd-numbered slot. This mirrors that
+     * indexing closely enough to resume cold speech at the saved page/text
+     * offset instead of only at the beginning of its spine section.
+     */
+    private fun resolveLocalCfi(root: Node, cfi: String): TextAnchor? {
+        val local = cfi.substringAfterLast('!', "")
+            .removeSuffix(")")
+            .takeIf { it.isNotBlank() }
+            ?: return null
+        val rangeParts = splitUnescaped(local, ',')
+        val collapsedStart = if (rangeParts.size >= 2) rangeParts[0] + rangeParts[1] else local
+        val steps = Regex("""/(\d+)(?:\[(?:\^.|[^]])*])?(?::(\d+))?""")
+            .findAll(collapsedStart)
+            .map { match ->
+                match.groupValues[1].toInt() to match.groupValues[2].toIntOrNull()
+            }
+            .toList()
+        if (steps.isEmpty()) return null
+
+        var current: Any? = root
+        for ((index, _) in steps) {
+            val node = current as? Node ?: return null
+            current = indexCfiChildren(node).getOrNull(index) ?: return null
+            when (current) {
+                CfiBoundary.FIRST -> current = node.firstChild ?: node
+                CfiBoundary.LAST -> current = node.lastChild ?: node
+                CfiBoundary.BEFORE, CfiBoundary.AFTER -> current = node
+            }
+        }
+
+        val offset = steps.last().second ?: 0
+        if (current is Node) return TextAnchor(current, offset)
+        @Suppress("UNCHECKED_CAST")
+        val textNodes = current as? List<Node> ?: return null
+        var consumed = 0
+        for (node in textNodes) {
+            val length = node.nodeValue?.length ?: 0
+            if (consumed + length >= offset) {
+                return TextAnchor(node, offset - consumed)
+            }
+            consumed += length
+        }
+        return textNodes.lastOrNull()?.let { TextAnchor(it, it.nodeValue?.length ?: 0) }
+    }
+
+    private enum class CfiBoundary { BEFORE, FIRST, LAST, AFTER }
+
+    private fun indexCfiChildren(node: Node): List<Any?> {
+        val raw = buildList<Node> {
+            val children = node.childNodes
+            for (index in 0 until children.length) {
+                val child = children.item(index)
+                if (
+                    child.nodeType == Node.ELEMENT_NODE ||
+                    child.nodeType == Node.TEXT_NODE ||
+                    child.nodeType == Node.CDATA_SECTION_NODE
+                ) {
+                    add(child)
+                }
+            }
+        }
+        val indexed = mutableListOf<Any?>()
+        for (child in raw) {
+            val last = indexed.lastOrNull()
+            val isText = child.nodeType == Node.TEXT_NODE || child.nodeType == Node.CDATA_SECTION_NODE
+            when {
+                indexed.isEmpty() -> indexed.add(child)
+                isText && last is List<*> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    indexed[indexed.lastIndex] = (last as List<Node>) + child
+                }
+                isText && last is Node &&
+                    (last.nodeType == Node.TEXT_NODE || last.nodeType == Node.CDATA_SECTION_NODE) ->
+                    indexed[indexed.lastIndex] = listOf(last, child)
+                isText -> indexed.add(child)
+                last is Node && last.nodeType == Node.ELEMENT_NODE -> {
+                    indexed.add(null)
+                    indexed.add(child)
+                }
+                else -> indexed.add(child)
+            }
+        }
+        if ((indexed.firstOrNull() as? Node)?.nodeType == Node.ELEMENT_NODE) {
+            indexed.add(0, CfiBoundary.FIRST)
+        }
+        if ((indexed.lastOrNull() as? Node)?.nodeType == Node.ELEMENT_NODE) {
+            indexed.add(CfiBoundary.LAST)
+        }
+        indexed.add(0, CfiBoundary.BEFORE)
+        indexed.add(CfiBoundary.AFTER)
+        return indexed
+    }
+
+    private fun splitUnescaped(value: String, delimiter: Char): List<String> {
+        val result = mutableListOf<String>()
+        var escaped = false
+        var bracketDepth = 0
+        var start = 0
+        value.forEachIndexed { index, char ->
+            when {
+                escaped -> escaped = false
+                char == '^' -> escaped = true
+                char == '[' -> bracketDepth += 1
+                char == ']' && bracketDepth > 0 -> bracketDepth -= 1
+                char == delimiter && bracketDepth == 0 -> {
+                    result.add(value.substring(start, index))
+                    start = index + 1
+                }
+            }
+        }
+        result.add(value.substring(start))
+        return result
     }
 
     private fun parseXml(bytes: ByteArray) = DocumentBuilderFactory.newInstance().apply {

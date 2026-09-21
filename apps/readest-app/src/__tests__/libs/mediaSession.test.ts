@@ -210,6 +210,7 @@ describe('TauriMediaSession.setActive', () => {
     expect(invoke).toHaveBeenCalledWith('plugin:native-tts|set_media_session_active', {
       payload: { active: true },
     });
+    await vi.waitFor(() => expect(releasePermission).toBeTypeOf('function'));
     releasePermission();
     await activation;
   });
