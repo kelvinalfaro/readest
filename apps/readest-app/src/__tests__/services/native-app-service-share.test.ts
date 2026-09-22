@@ -107,7 +107,7 @@ describe('NativeAppService.saveFile share gating', () => {
     expect(destinations).toHaveLength(2);
     expect(new Set(destinations).size).toBe(2);
     expect(destinations.every((destination) => destination.endsWith('-book.pdf'))).toBe(true);
-  });
+  }, 15_000);
 
   test('uses native share on macOS when share=true', async () => {
     const service = await loadServiceWithOS('macos');

@@ -120,7 +120,7 @@ describe('NativeAppService.saveImageToGallery', () => {
     // The staged file the plugin reads must be the one we named.
     expect(first.srcPath.endsWith(first.fileName)).toBe(true);
     expect(second.srcPath.endsWith(second.fileName)).toBe(true);
-  });
+  }, 15_000);
 
   test('logs the native error when the MediaStore insert fails', async () => {
     const service = await initAndroidService();

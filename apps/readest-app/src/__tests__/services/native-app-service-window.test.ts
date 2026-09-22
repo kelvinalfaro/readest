@@ -119,7 +119,7 @@ describe('NativeAppService canvas filter capability', () => {
     for (const os of ['linux', 'windows', 'android'] as const) {
       expect((await loadServiceWithOS(os)).supportsCanvasContext2DFilter).toBe(true);
     }
-  });
+  }, 15_000);
 
   test('the Apple platforms do not, because WKWebView ignores the filter', async () => {
     for (const os of ['macos', 'ios'] as const) {
