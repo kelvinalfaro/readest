@@ -634,9 +634,8 @@ class NativeTTSPlugin(private val activity: Activity) : Plugin(activity) {
                 // Set before the service starts: activateSession reads it to
                 // decide whether to take audio focus for this session.
                 MediaPlaybackService.ownsAudioFocus = args.ownsAudioFocus ?: true
-                // Record intent before service creation. If a stop wins the
-                // race, onStartCommand observes the newer inactive state and
-                // suppresses this delayed activation.
+                // Record ownership before service creation. A late teardown
+                // from the prior book must not deactivate this replacement.
                 MediaPlaybackService.requestActivation(args.sessionId, args.bookHash)
                 MediaPlaybackService.setPluginEventTrigger { event, data -> trigger(event, data) }
                 // Persist the book so the Android Auto browse tree can offer a

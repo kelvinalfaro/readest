@@ -7,6 +7,8 @@ import { IoPricetag } from 'react-icons/io5';
 import { MdArrowDropDown } from 'react-icons/md';
 import { Book } from '@/types/book';
 import { OPDSPublication, REL, SYMBOL, OPDSAcquisitionLink, OPDSStreamLink } from '@/types/opds';
+import { audioMimeType, pickAudioLinks } from '@/services/opds/audiobook';
+import type { OpdsAudioTrackLink } from '@/services/opds/audiobook';
 import { getOPDSCoverHref } from '@/services/opds/cover';
 import {
   classifyAcquisitionLink,
@@ -44,6 +46,7 @@ interface PublicationViewProps {
     onProgress?: (progress: { progress: number; total: number }) => void,
   ) => Promise<OPDSDownloadResult>;
   onStream?: (href: string, count: number, title: string, author: string) => void;
+  onPlayAudio?: (tracks: OpdsAudioTrackLink[], title: string, author: string) => void;
   onGenerateCachedImageUrl: (url: string, cacheVersion?: string) => Promise<string>;
 }
 
@@ -62,6 +65,7 @@ export function PublicationView({
   onNavigate,
   onDownload,
   onStream,
+  onPlayAudio,
   onGenerateCachedImageUrl,
 }: PublicationViewProps) {
   const _ = useTranslation();
@@ -120,7 +124,7 @@ export function PublicationView({
 
   const authorNames = useMemo(() => authors.map((a) => a.name), [authors]);
 
-  const acquisitionLinks = useMemo(() => {
+  const allAcquisitionLinks = useMemo(() => {
     const links: Array<{ rel: string; links: OPDSAcquisitionLink[] }> = [];
     for (const [rel, linkList] of Array.from(linksByRel.entries())) {
       if (rel?.startsWith(REL.ACQ)) {
@@ -130,9 +134,28 @@ export function PublicationView({
     return links;
   }, [linksByRel]);
 
+  // Keep acquisition links available for the fork's explicit save-to-device
+  // flow while also offering upstream's direct streaming Play action.
+  const acquisitionLinks = allAcquisitionLinks;
+
   const streamLinks = useMemo(() => {
     return (linksByRel.get(REL.STREAM) || []) as OPDSStreamLink[];
   }, [linksByRel]);
+
+  // Upstream streams catalog audio in the player. The fork additionally keeps
+  // its existing explicit download/save action for offline audiobook files.
+  const audioTracks = useMemo<OpdsAudioTrackLink[]>(
+    () =>
+      allAcquisitionLinks
+        .flatMap(({ links }) => pickAudioLinks(links))
+        .filter((link): link is OPDSAcquisitionLink & { href: string } => !!link.href)
+        .map((link) => ({
+          href: link.href,
+          mimeType: audioMimeType(link),
+          ...(link.title ? { title: link.title } : {}),
+        })),
+    [allAcquisitionLinks],
+  );
 
   const handleActionButton = async (link: OPDSAcquisitionLink, forceDownload = false) => {
     if (downloadedBook && !forceDownload) {
@@ -335,11 +358,16 @@ export function PublicationView({
             )}
           </div>
 
-          {!downloadedBook && acquisitionLinks.length === 0 && streamLinks.length === 0 && (
-            <p className='text-base-content/60 text-sm'>{_('No downloadable format available')}</p>
-          )}
+          {!downloadedBook &&
+            acquisitionLinks.length === 0 &&
+            streamLinks.length === 0 &&
+            audioTracks.length === 0 && (
+              <p className='text-base-content/60 text-sm'>
+                {_('No downloadable format available')}
+              </p>
+            )}
 
-          {(acquisitionLinks.length > 0 || streamLinks.length > 0) && (
+          {(acquisitionLinks.length > 0 || streamLinks.length > 0 || audioTracks.length > 0) && (
             <div className='flex flex-wrap items-center gap-2'>
               {acquisitionLinks.map(({ rel, links }) => {
                 const validLinks = links.filter((l) => l.href);
@@ -463,6 +491,22 @@ export function PublicationView({
                 }
                 return null;
               })}
+
+              {audioTracks.length > 0 && (
+                <button
+                  type='button'
+                  onClick={() =>
+                    onPlayAudio?.(
+                      audioTracks,
+                      publication.metadata?.title || '',
+                      authorNames.join(' & '),
+                    )
+                  }
+                  className={clsx('btn btn-secondary min-w-20 rounded-3xl')}
+                >
+                  {_('Play')}
+                </button>
+              )}
 
               {/* Rendered only while a download is running. A permanently
                   mounted 48px slot left a dead gap after the actions on every

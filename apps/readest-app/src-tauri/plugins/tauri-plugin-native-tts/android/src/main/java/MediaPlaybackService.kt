@@ -8,7 +8,11 @@ import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.content.pm.Signature
+import android.os.Process
+import java.security.MessageDigest
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -78,15 +82,23 @@ internal object MediaSessionActivationState {
             return false
         }
         desiredActive = false
-        desiredSessionId = null
+        // Deliberately keep desiredSessionId. The idle-shutdown timer and
+        // destroy() deactivate with no sessionId, and clearing the owner here
+        // made acceptsUpdate() reject every later update from the session that
+        // is still on screen — a book paused past the idle timeout could never
+        // move its scrubber again. The owner is overwritten by the next
+        // activation, which is the only thing that should replace it.
         return true
     }
 
     fun isActivationDesired(): Boolean = desiredActive
 
+    // Reject updates from a session that has been REPLACED by another book.
+    // Deactivation alone must not reject them: the session on screen keeps
+    // reporting position while the foreground service is torn down.
     @Synchronized
     fun acceptsUpdate(sessionId: String?): Boolean =
-        sessionId == null || (desiredActive && sessionId == desiredSessionId)
+        sessionId == null || desiredSessionId == null || sessionId == desiredSessionId
 
     @Synchronized
     fun resetForTest() {
@@ -199,7 +211,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     private fun requestFocus() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(SPOKEN_MEDIA_ATTRIBUTES)
                 .setWillPauseWhenDucked(true)
                 .setOnAudioFocusChangeListener(afChangeListener)
@@ -237,6 +249,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         private const val CHANNEL_ID = "media2_playback_channel"
         private const val NOTIFICATION_ID = 1002
         private const val MEDIA_ROOT_ID = "media_root_id"
+        // Shadow mode. False = every caller is still served the real tree and
+        // the verdict is only logged; true = unvalidated callers are refused
+        // outright. Flip this only after the certificates in
+        // MediaBrowserCallerValidator.TRUSTED_CERTIFICATES have been filled in
+        // from what real head units actually present (see that file).
+        private const val ENFORCE_BROWSE_VALIDATION = false
         private const val LIBRARY_ROOT_ID = "readest_library"
         private const val BOOK_MEDIA_ID_PREFIX = "readest_book:"
         private const val CURRENT_READING_MEDIA_ID = "readest_current_reading"
@@ -253,6 +271,15 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         private const val PREFS_MEDIA_LIBRARY = "media_library"
         private const val KEY_LIBRARY_JSON = "books_json"
         private const val COVER_THUMBNAIL_CACHE_DIR = "cover-thumbnails/v1"
+        // How long a browse selection may stay in STATE_BUFFERING before the
+        // car is told it failed. Generous enough to cover a cold WebView plus
+        // a cloud download, short enough to beat Android Auto's own timeout.
+        private const val SELECTION_TIMEOUT_MS = 20_000L
+        // Upper bound on the published browse tree, mirroring
+        // MAX_ANDROID_AUTO_BOOKS on the JS side. The exported service is
+        // bindable by any app, so the native side enforces its own ceiling
+        // rather than trusting whatever the payload happens to contain.
+        private const val MAX_LIBRARY_BOOKS = 10
         private val MD5_PATTERN = Regex("^[0-9a-fA-F]{32}$")
 
         @Volatile
@@ -382,6 +409,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             val array = JSONArray(booksJson)
             return buildList {
                 for (index in 0 until array.length()) {
+                    if (size >= MAX_LIBRARY_BOOKS) break
                     val item = array.optJSONObject(index) ?: continue
                     val hash = item.optString("hash").trim()
                     val title = item.optString("title").trim()
@@ -447,14 +475,17 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             if (!changed) return
 
             // Never carry the previous book's decoded bitmap into the new
-            // session. The live service seeds the matching cached library
-            // thumbnail immediately; the full artwork can replace it later.
+            // session. Seed the matching cached library thumbnail immediately;
+            // the full artwork can replace it later.
             currentArtwork = null
             currentArtworkUri = null
             currentPositionMs = 0L
             currentDurationMs = 0L
             val service = instance ?: return
             Handler(Looper.getMainLooper()).post {
+                // Explicit WebView playback takes ownership even if Pause
+                // canceled the pending automatic book-selection handoff.
+                service.clearColdTtsPlayback()
                 service.resetArtworkForBook(bookHash)
             }
         }
@@ -463,8 +494,6 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             if (!MediaSessionActivationState.requestDeactivation(sessionId)) return
             val service = instance ?: return
             Handler(Looper.getMainLooper()).post {
-                // A newer start may have arrived while this main-thread task
-                // was queued; never let an old stop tear down the new session.
                 if (!MediaSessionActivationState.isActivationDesired()) {
                     service.deactivateSession()
                 }
@@ -554,6 +583,9 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     private fun activateSession() {
         Log.d("MediaPlaybackService", "activateSession (wasActive=$sessionActive, focus=$ownsAudioFocus)")
+        // Whatever the car selected has arrived and is starting; the pending
+        // selection no longer needs a failure timer.
+        cancelSelectionWatchdog()
         if (!sessionActive) {
             sessionActive = true
 
@@ -748,8 +780,8 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                     override fun onStart(utteranceId: String?) = Unit
 
                     override fun onDone(utteranceId: String?) {
-                        mainHandler.post {
-                            if (!isCurrentColdUtterance(utteranceId) || coldTtsPaused) return@post
+                        mainHandler.post done@{
+                            if (!isCurrentColdUtterance(utteranceId) || coldTtsPaused) return@done
                             coldTtsIndex += 1
                             if (coldTtsIndex >= coldTtsSegments.size) {
                                 mediaSession?.setPlaybackState(
@@ -769,7 +801,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                     @Deprecated("Deprecated in Android")
                     override fun onError(utteranceId: String?) {
                         mainHandler.post {
-                            if (isCurrentColdUtterance(utteranceId)) {
+                            if (isCurrentColdUtterance(utteranceId) && !coldTtsPaused) {
                                 publishColdTtsError("Android text-to-speech stopped unexpectedly")
                             }
                         }
@@ -904,6 +936,13 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     private inner class SessionCallback : MediaSessionCompat.Callback() {
         override fun onPlay() {
+            // The session stays command-ready for the whole life of the bound
+            // service so the car can browse while nothing plays, which means a
+            // transport command can arrive with no session behind it: a
+            // headset or Bluetooth play button routed here by the framework.
+            // Starting the silent keep-alive player then would hold the media
+            // button away from whatever the user actually meant to resume, so
+            // treat it as a request to resume the last book instead.
             coldTtsBookHash?.let {
                 if (coldTtsActive) resumeColdTts() else activateColdEpubPlayback(it)
                 return
@@ -913,23 +952,16 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 return
             }
             if (!sessionActive) {
-                val hash = currentBookHash ?: lastBookHash
-                if (hash != null) {
-                    onPlayFromMediaId("$BOOK_MEDIA_ID_PREFIX$hash", null)
-                    return
-                }
+                onPlayFromMediaId(lastBookHash?.let { "$BOOK_MEDIA_ID_PREFIX$it" }, null)
+                return
             }
-            // A route may have changed while paused (Bluetooth headphones to
-            // Android Auto, or the reverse). Re-requesting focus immediately
-            // before playback makes Android bind this session to the current
-            // media route instead of retaining the previous device.
-            if (ownsAudioFocus) requestFocus()
             player.play()
             pluginEventTrigger?.invoke("media-session-play", JSObject())
             updatePlaybackState()
         }
 
         override fun onPause() {
+            if (!sessionActive) return
             // An explicit user pause must stick: cancel any pending
             // resume-after-interruption.
             resumeOnFocusGain = false
@@ -1008,13 +1040,14 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 else -> lastBookHash
             } ?: return
 
+            // Show the pending book on the session only. The statics
+            // (currentTitle/currentArtist/currentPositionMs) describe the
+            // session that is actually playing; overwriting them here let any
+            // bound client retitle and zero the scrubber of live audio, and
+            // left no way back if the selection never landed.
             val selectedBook = libraryBooks.firstOrNull { it.hash == hash }
             if (selectedBook != null) {
-                currentTitle = selectedBook.title
-                currentArtist = selectedBook.author
-                currentPositionMs = 0L
-                currentBookHash = hash
-                resetArtworkForBook(hash)
+                mediaSession?.setMetadata(buildLibraryBookMetadata(selectedBook))
                 saveLastBook(this@MediaPlaybackService, hash, selectedBook.title, selectedBook.author)
             }
             // A playable-item request is asynchronous: the WebView still has
@@ -1024,6 +1057,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             mediaSession?.setPlaybackState(
                 stateBuilder.setState(PlaybackStateCompat.STATE_BUFFERING, 0L, 1f).build()
             )
+            armSelectionWatchdog(hash)
 
             // Normal case: the app process is alive in the background. Let the
             // global bridge select the book and start the existing ebook TTS or
@@ -1040,17 +1074,17 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 return
             }
 
-            // Cold process fallback: wake the existing app through an explicit
-            // PendingIntent. Direct startActivity() calls from a bound media
-            // service are silently blocked by Android's background-activity
-            // launch rules on current releases. The queued book selection is
-            // delivered when the WebView republishes its media bridge.
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            } ?: Intent(Intent.ACTION_VIEW, Uri.parse(
-                if (selectedBook?.isAudiobook == true) "readest://book/$hash"
-                else "readest://book/$hash?autoplay=tts"
-            )).setPackage(packageName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Cold process fallback: the generic book deep link routes an
+            // audiobook to the player after library hydration. Only ebooks
+            // carry the autoplay flag consumed by the reader's TTS bridge.
+            val deepLink = if (selectedBook?.isAudiobook == true) {
+                "readest://book/$hash"
+            } else {
+                "readest://book/$hash?autoplay=tts"
+            }
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLink))
+                .setPackage(packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             try {
                 val creatorOptions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                     ActivityOptions.makeBasic().apply {
@@ -1072,7 +1106,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 val pendingIntent = PendingIntent.getActivity(
                     this@MediaPlaybackService,
                     hash.hashCode(),
-                    launchIntent,
+                    intent,
                     PendingIntent.FLAG_CANCEL_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                     creatorOptions,
                 )
@@ -1131,6 +1165,52 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     // build: the URI is only re-published when the cover bitmap itself changes.
     private var artworkUriSource: Bitmap? = null
     private var artworkUriFile: File? = null
+
+    // A selected book has to reach the WebView, wait for library hydration,
+    // possibly download its file, and only then start playback. STATE_BUFFERING
+    // covers that, but nothing else ever clears it: a selection that silently
+    // fails (row deleted since the browse tree was cached, no listener on the
+    // current route, WebView gone) left the car spinning until Android Auto
+    // gave up with the exact error this feature set out to remove. Hand back a
+    // real failure instead.
+    private val selectionHandler = Handler(Looper.getMainLooper())
+    private var pendingSelection: String? = null
+    private val selectionTimeout = Runnable {
+        pendingSelection = null
+        // A successful handoff cancels this watchdog in activateSession(), so
+        // reaching here always means the selection failed. sessionActive can
+        // still be true when a DIFFERENT book was already playing: returning
+        // early then left that live session stuck in STATE_BUFFERING, so
+        // republish its real state instead of reporting an error over it.
+        if (sessionActive) {
+            updatePlaybackState()
+            return@Runnable
+        }
+        mediaSession?.setPlaybackState(
+            stateBuilder
+                .setState(PlaybackStateCompat.STATE_ERROR, 0L, 1f)
+                .setErrorMessage(
+                    PlaybackStateCompat.ERROR_CODE_APP_ERROR,
+                    getString(R.string.readest_auto_selection_failed),
+                )
+                .build()
+        )
+        // stateBuilder is reused for every later state write, so the error must
+        // not stick to it.
+        stateBuilder.setErrorMessage(PlaybackStateCompat.ERROR_CODE_UNKNOWN_ERROR, "")
+        applyMetadata()
+    }
+
+    private fun armSelectionWatchdog(hash: String) {
+        pendingSelection = hash
+        selectionHandler.removeCallbacks(selectionTimeout)
+        selectionHandler.postDelayed(selectionTimeout, SELECTION_TIMEOUT_MS)
+    }
+
+    private fun cancelSelectionWatchdog() {
+        pendingSelection = null
+        selectionHandler.removeCallbacks(selectionTimeout)
+    }
 
     private fun resetArtworkForBook(bookHash: String?) {
         artworkUriSource = null
@@ -1350,7 +1430,95 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         return builder.build()
     }
 
+    // Verdict per (package, uid). onGetRoot runs on a binder thread and every
+    // PackageManager lookup below is an IPC, so it is resolved once per caller.
+    private val callerVerdicts = java.util.concurrent.ConcurrentHashMap<String, BrowseAccess>()
+
+    private fun readCallerIdentity(pkg: String, uid: Int): CallerIdentity {
+        val certificates = try {
+            val signatures: Array<Signature>? =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val info =
+                        packageManager.getPackageInfo(pkg, PackageManager.GET_SIGNING_CERTIFICATES)
+                    // Always the CURRENT signer(s). signingCertificateHistory is
+                    // the rotation lineage, not the present identity: reading it
+                    // reported two certificates for Android Auto (a rotated key
+                    // plus today's), and since a caller must match every
+                    // certificate it presents, pinning would then have had to
+                    // include a retired key and would break on the next
+                    // rotation. apkContentsSigners matches what apksigner
+                    // reports for the installed APK.
+                    info.signingInfo?.apkContentsSigners
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageManager.getPackageInfo(pkg, PackageManager.GET_SIGNATURES).signatures
+                }
+            signatures.orEmpty().map { signature ->
+                MessageDigest.getInstance("SHA-256")
+                    .digest(signature.toByteArray())
+                    .joinToString("") { byte -> "%02x".format(byte) }
+            }.toSet()
+        } catch (e: Exception) {
+            Log.w("MediaPlaybackService", "Failed to read signatures for $pkg", e)
+            emptySet()
+        }
+        val platformSigned = try {
+            packageManager.checkSignatures(uid, Process.SYSTEM_UID) == PackageManager.SIGNATURE_MATCH
+        } catch (e: Exception) {
+            false
+        }
+        val holdsMediaContentControl = try {
+            packageManager.checkPermission(
+                android.Manifest.permission.MEDIA_CONTENT_CONTROL,
+                pkg,
+            ) == PackageManager.PERMISSION_GRANTED
+        } catch (e: Exception) {
+            false
+        }
+        return CallerIdentity(
+            packageName = pkg,
+            uid = uid,
+            signatureSha256 = certificates,
+            platformSigned = platformSigned,
+            holdsMediaContentControl = holdsMediaContentControl,
+        )
+    }
+
+    // Verdict for whoever is driving the in-flight browse callback. Resolved
+    // from the same cache onGetRoot fills, so it costs nothing on the hot path.
+    private fun isCurrentBrowserAllowed(): Boolean {
+        val browser = currentBrowserInfo ?: return false
+        return resolveCallerVerdict(browser.packageName, browser.uid).allowed
+    }
+
+    private fun resolveCallerVerdict(pkg: String, uid: Int): BrowseAccess =
+        callerVerdicts.getOrPut("$uid:$pkg") {
+            val identity = readCallerIdentity(pkg, uid)
+            val decision = MediaBrowserCallerValidator.evaluate(identity, Process.myUid())
+            // Shadow-mode record. This is the only way to learn which packages
+            // and certificates real head units present before the allowlist is
+            // enforced; grep logcat for "browse caller".
+            Log.i(
+                "MediaPlaybackService",
+                "browse caller pkg=$pkg uid=$uid verdict=$decision " +
+                    "expected=${pkg in MediaBrowserCallerValidator.EXPECTED_MEDIA_CLIENTS} " +
+                    "certs=${identity.signatureSha256.joinToString(",")}",
+            )
+            decision
+        }
+
     override fun onGetRoot(clientPackageName: String, clientUid: Int, rootHints: Bundle?): BrowserRoot? {
+        val verdict = resolveCallerVerdict(clientPackageName, clientUid)
+
+        if (ENFORCE_BROWSE_VALIDATION && !verdict.allowed) {
+            // Refuse the connection outright. An empty root still completes it,
+            // and a completed connection hands the caller the media-session
+            // token — from which it can drive onPlay/onPlayFromMediaId, since
+            // the session callbacks authorize nothing. Google's Android for
+            // Cars guidance is explicit: return null for an untrusted package.
+            return null
+        }
+
         // Grant the cover URI to the connecting browser client (Android Auto,
         // the media system UI) so its art loader can read it across UIDs.
         browserClients.add(clientPackageName)
@@ -1360,6 +1528,13 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     override fun onLoadChildren(parentId: String, result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
         val items = mutableListOf<MediaBrowserCompat.MediaItem>()
+        // A browser client picks the parentId it subscribes to, so it can ask
+        // for LIBRARY_ROOT_ID directly no matter which root onGetRoot handed
+        // back. Authorize here too, or the root check is only advisory.
+        if (ENFORCE_BROWSE_VALIDATION && !isCurrentBrowserAllowed()) {
+            result.sendResult(items)
+            return
+        }
         if (parentId == MEDIA_ROOT_ID && sessionActive) {
             refreshArtworkUri()
             val description = MediaDescriptionCompat.Builder()
@@ -1373,8 +1548,14 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         if (parentId == MEDIA_ROOT_ID && libraryBooks.isNotEmpty()) {
             val description = MediaDescriptionCompat.Builder()
                 .setMediaId(LIBRARY_ROOT_ID)
-                .setTitle("Library")
-                .setSubtitle("${libraryBooks.size} books")
+                .setTitle(getString(R.string.readest_auto_library_root))
+                .setSubtitle(
+                    resources.getQuantityString(
+                        R.plurals.readest_auto_library_count,
+                        libraryBooks.size,
+                        libraryBooks.size,
+                    )
+                )
                 .build()
             items.add(
                 MediaBrowserCompat.MediaItem(
@@ -1418,9 +1599,8 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 if (MediaSessionActivationState.isActivationDesired()) {
                     activateSession()
                 } else {
-                    // startForegroundService was already issued before the
-                    // stop arrived. Satisfy its foreground contract, then
-                    // discard the stale activation without reviving playback.
+                    // A stop can overtake the asynchronous service start.
+                    // Satisfy the foreground contract without reviving it.
                     showNotification(PlaybackStateCompat.STATE_PAUSED)
                     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
                     stopSelf(startId)
@@ -1458,6 +1638,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
     override fun onDestroy() {
         instance = null
+        cancelSelectionWatchdog()
         clearColdTtsPlayback()
         coldTextExecutor.shutdownNow()
         if (noisyReceiverRegistered) {

@@ -77,6 +77,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::get_safe_area_insets,
             commands::get_screen_brightness,
             commands::set_screen_brightness,
+            commands::set_screen_wake_lock,
             commands::has_ambient_light_sensor,
             commands::start_ambient_light_updates,
             commands::stop_ambient_light_updates,

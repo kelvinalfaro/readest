@@ -160,9 +160,13 @@ describe('TTSMediaBridge', () => {
   // app renders itself (TTS, native narration) keep the service as the owner.
   test('the activation payload carries who owns audio focus', async () => {
     class RecordingTauriSession extends TauriMediaSession {
-      activations: { active: boolean; ownsAudioFocus?: boolean }[] = [];
+      activations: { active: boolean; sessionId?: string; ownsAudioFocus?: boolean }[] = [];
       override setActionHandler() {}
-      override async setActive(state: { active: boolean; ownsAudioFocus?: boolean }) {
+      override async setActive(state: {
+        active: boolean;
+        sessionId?: string;
+        ownsAudioFocus?: boolean;
+      }) {
         this.activations.push(state);
       }
       override async updateMetadata() {}
@@ -173,6 +177,7 @@ describe('TTSMediaBridge', () => {
 
     await bridge.bind(controller as unknown as TTSController, meta());
     expect(tauriSession.activations[0]!.ownsAudioFocus).toBe(true);
+    expect(tauriSession.activations[0]!.sessionId).toBe('hash-abc');
 
     await bridge.bind(
       new FakeController() as unknown as TTSController,
@@ -491,6 +496,83 @@ describe('TTSMediaBridge bind teardown race (READEST-1A)', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
+  test('a new book never inherits the previous book cover', async () => {
+    // Artwork loads asynchronously after bind(), so the first metadata push of
+    // the next book used to carry the previous book's cover — and consumed the
+    // one-shot #pushArtwork flag, so the correction never landed.
+    const tauriSession = new TauriMediaSession();
+    tauriSession.setActive = vi.fn().mockResolvedValue(undefined);
+    tauriSession.updateMetadata = vi.fn().mockResolvedValue(undefined);
+    tauriSession.setActionHandler = vi.fn();
+    const bridge = new TTSMediaBridge(() => tauriSession);
+
+    vi.mocked(fetchImageAsBase64).mockResolvedValueOnce('data:image/png;base64,first');
+    await bridge.bind(new FakeController() as unknown as TTSController, meta());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(tauriSession.updateMetadata).toHaveBeenCalledWith(
+      expect.objectContaining({ artwork: 'data:image/png;base64,first' }),
+    );
+
+    bridge.unbind();
+    vi.mocked(tauriSession.updateMetadata).mockClear();
+
+    // Second book: both the cover and the bundled fallback fail to load.
+    vi.mocked(fetchImageAsBase64).mockRejectedValueOnce(new Error('no cover'));
+    vi.mocked(fetchImageAsBase64).mockRejectedValueOnce(new Error('no fallback'));
+    await bridge.bind(
+      new FakeController() as unknown as TTSController,
+      meta({ bookKey: 'hash-def', title: 'Second', coverImageUrl: 'missing.png' }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    for (const call of vi.mocked(tauriSession.updateMetadata).mock.calls) {
+      expect(call[0]?.artwork).not.toBe('data:image/png;base64,first');
+    }
+  });
+
+  test('a stale artwork push does not consume the new binding cover slot', async () => {
+    // The artwork updateMetadata() for book A can still be in flight when
+    // unbind() + a new bind for book B reset #pushArtwork to true. Clearing the
+    // flag when the stale call finally resolves would eat B's one-shot cover
+    // push and leave B without artwork.
+    let releaseFirstMetadata!: () => void;
+    const tauriSession = new TauriMediaSession();
+    tauriSession.setActive = vi.fn().mockResolvedValue(undefined);
+    tauriSession.setActionHandler = vi.fn();
+    tauriSession.updateMetadata = vi
+      .fn()
+      .mockImplementation(async (payload: { artwork?: string }) => {
+        if (payload.artwork === 'data:image/png;base64,first') {
+          await new Promise<void>((resolve) => {
+            releaseFirstMetadata = resolve;
+          });
+        }
+      });
+    const bridge = new TTSMediaBridge(() => tauriSession);
+
+    vi.mocked(fetchImageAsBase64).mockResolvedValueOnce('data:image/png;base64,first');
+    await bridge.bind(new FakeController() as unknown as TTSController, meta());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Book B takes over while A's artwork push is still pending.
+    bridge.unbind();
+    vi.mocked(fetchImageAsBase64).mockResolvedValueOnce('data:image/png;base64,second');
+    const controllerB = new FakeController();
+    await bridge.bind(controllerB as unknown as TTSController, meta({ bookKey: 'hash-def' }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // A's push now completes, too late.
+    releaseFirstMetadata();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    vi.mocked(tauriSession.updateMetadata).mockClear();
+    controllerB.emitMark('x', 'mark-1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const pushed = vi.mocked(tauriSession.updateMetadata).mock.calls.map((c) => c[0]?.artwork);
+    expect(pushed).not.toContain('data:image/png;base64,first');
+  });
+
   test('stop during native activation finishes inactive', async () => {
     let releaseActivation!: () => void;
     const states: MediaSessionState[] = [];
@@ -562,7 +644,12 @@ describe('TTSMediaBridge bind teardown race (READEST-1A)', () => {
   test('reconciles playback that started while native activation was pending', async () => {
     const tauriSession = new TauriMediaSession();
     let releaseActivation!: () => void;
+    let reportActivationStarted!: () => void;
+    const activationStarted = new Promise<void>((resolve) => {
+      reportActivationStarted = resolve;
+    });
     tauriSession.setActive = vi.fn(async () => {
+      reportActivationStarted();
       await new Promise<void>((resolve) => {
         releaseActivation = resolve;
       });
@@ -575,9 +662,8 @@ describe('TTSMediaBridge bind teardown race (READEST-1A)', () => {
     controller.state = 'stopped';
 
     const binding = bridge.bind(controller as unknown as TTSController, meta());
-    await Promise.resolve();
-    // The controller starts before bind() has registered its state listener,
-    // exactly the window that previously left Android Auto showing stopped.
+    await activationStarted;
+    // Playback begins before bind() has registered its state listener.
     controller.state = 'playing';
     releaseActivation();
     await binding;

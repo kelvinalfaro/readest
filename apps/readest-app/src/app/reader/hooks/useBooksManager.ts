@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
+import { useReaderProgressStore } from '@/store/readerProgressStore';
 import { useSidebarStore } from '@/store/sidebarStore';
 import { uniqueId } from '@/utils/misc';
 import { useParallelViewStore } from '@/store/parallelViewStore';
 import { navigateToReader } from '@/utils/nav';
 import { eventDispatcher } from '@/utils/event';
+import { consumePendingTTSAutoplay } from '@/utils/ttsAutoplay';
 import { useTranslation } from '@/hooks/useTranslation';
 
 const useBooksManager = () => {
@@ -82,6 +84,33 @@ const useBooksManager = () => {
     });
   };
 
+  // Car autoplay needs both the view and its initial reading position.
+  // Relocation commits can arrive after view initialization; useTTSControl
+  // cannot start without that position. Caveat: unblockAudio is gesture-gated on WebAudio, so
+  // an Edge-engine autoplay may be a no-op if the launch is not treated as a
+  // user gesture on Android WebView; native TTS is unaffected.
+  const startTTSWhenReady = (bookKey: string) => {
+    const ready = (state: ReturnType<typeof useReaderStore.getState>) => {
+      const vs = state.viewStates[bookKey];
+      const ok = !!vs?.inited && !!vs?.view && !!state.getProgress(bookKey);
+      return { done: !!vs?.error || ok, ok };
+    };
+    const initial = ready(useReaderStore.getState());
+    if (initial.done) {
+      if (initial.ok) eventDispatcher.dispatch('tts-speak', { bookKey });
+      return;
+    }
+    const onReady = () => {
+      const { done, ok } = ready(useReaderStore.getState());
+      if (!done) return;
+      unsubscribeView();
+      unsubscribeProgress();
+      if (ok) eventDispatcher.dispatch('tts-speak', { bookKey });
+    };
+    const unsubscribeView = useReaderStore.subscribe(onReady);
+    const unsubscribeProgress = useReaderProgressStore.subscribe(onReady);
+  };
+
   // Open a book in-place when a widget/deep link targets a book while a reader
   // is already mounted. REPLACE the open book(s) with the target one (single
   // ids=<hash>) rather than appending: appending produced ids=a+b which, with
@@ -93,6 +122,9 @@ const useBooksManager = () => {
     if (existing) {
       setSideBarBookKey(existing);
       if (cfi) goToCfiWhenReady(existing, cfi);
+      // Cold-restore autoplay: the deep link can land after this book is
+      // already mounted, and focusing it leaves bookKeys unchanged.
+      if (consumePendingTTSAutoplay(bookHash)) startTTSWhenReady(existing);
       return;
     }
     const newKey = `${bookHash}-${uniqueId()}`;
@@ -114,6 +146,17 @@ const useBooksManager = () => {
     eventDispatcher.on('open-book-in-reader', handle);
     return () => eventDispatcher.off('open-book-in-reader', handle);
   }, []);
+
+  // Consume an Android Auto cold-resume autoplay request once its book is in
+  // the open set (covers both the in-place open and cold-navigate paths).
+  useEffect(() => {
+    for (const key of bookKeys) {
+      if (consumePendingTTSAutoplay(key.split('-')[0]!)) {
+        startTTSWhenReady(key);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookKeys]);
 
   // Close a book and sync with bookKeys and URL
   const dismissBook = (bookKey: string) => {

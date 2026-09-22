@@ -269,6 +269,10 @@ export class TTSMediaBridge {
     this.#lastSectionLabel = undefined;
     this.#previousSectionLabel = undefined;
     this.#pushArtwork = true;
+    // Artwork loads asynchronously after bind(), so without this reset the
+    // first metadata push of the NEXT book carries the previous book's cover
+    // (and consumes #pushArtwork, so the correction never lands).
+    this.#coverArtwork = '';
   }
 
   async #loadArtwork(
@@ -276,14 +280,15 @@ export class TTSMediaBridge {
     meta: TTSMediaBridgeMeta,
     bindingId: number,
   ): Promise<void> {
-    let artwork: string;
+    let artwork = '';
     try {
       artwork = await fetchImageAsBase64(meta.coverImageUrl || '/icon.png');
     } catch {
       try {
         artwork = await fetchImageAsBase64('/icon.png');
       } catch {
-        artwork = '';
+        // Both the cover and the bundled fallback failed to load. Leave the
+        // artwork empty rather than inheriting whatever was there before.
       }
     }
     if (this.#bindingId !== bindingId || this.#mediaSession !== mediaSession) return;
@@ -295,6 +300,11 @@ export class TTSMediaBridge {
         album: meta.title,
         artwork,
       });
+      // unbind() + a new bind can land during the await above, and that new
+      // binding sets #pushArtwork back to true so its own cover still gets
+      // published. Clearing the flag here without rechecking would consume the
+      // NEW binding's one-shot push and leave the new book without a cover.
+      if (this.#bindingId !== bindingId || this.#mediaSession !== mediaSession) return;
       this.#pushArtwork = false;
     }
   }

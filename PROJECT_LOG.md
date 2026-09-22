@@ -2,6 +2,13 @@
 
 Historical entries below preserve the status reported at the time; later entries may supersede their open steps, paths, and release state.
 
+## 2026-09-22 — Upstream v0.12.10 sync and fork-aligned versioning
+
+- Created local recovery branch `backup/main-pre-upstream-20260922-v0.12.10` and merged upstream Readest `v0.12.10` (`8a56831af`) into CWA `main`, retaining the private CWA, Android TV, BookOrbit download/pairing, fork updater, and device-specific behavior. The upstream release now includes the shared Android Auto browse/resume and cold EPUB playback contributions, so conflict resolution favored the consolidated upstream car-media implementation while preserving fork-only extensions.
+- Adopted upstream-based version names: `0.12.10-cwa.1`, with independent Android `versionCode` `12026`. Future upstream syncs should update the three-part Readest base and reset/increment the `cwa.N` revision while keeping Android `versionCode` strictly increasing.
+- Validation passed TypeScript/Biome lint across 2,541 files, repository formatting across 2,576 files, 125 focused web tests, native TTS Kotlin tests, and a complete arm64 debug Android build. The full web suite passed 12,015 tests with 16 skipped; one timing-sensitive canvas test timed out under full-suite load and passed on isolated rerun, and the version assertion updated for the new scheme also passed on rerun. The built APK reports package `com.bilingify.readest.cwa`, version name `0.12.10-cwa.1`, version code `12026`, and only the arm64 Readest library.
+- Nothing was pushed or released. Because installed `0.12.25` compares newer than `0.12.10-cwa.1` under SemVer, the first aligned build requires either a one-time manual install or an explicitly authorized `0.12.26` bridge release before normal automatic updates continue.
+
 ## 2026-09-20 — Android Auto service-owned cold EPUB playback
 
 - Captured the failure live from the connected phone and car. Android Auto successfully delivered `playFromMediaId`, Play, and Pause commands and temporarily allowlisted Readest for a foreground service, but no Readest activity was launched; the media session only alternated between Buffering and Paused. This confirmed that the car connection and browse layer worked while the cold WebView/activity handoff could not start speech.

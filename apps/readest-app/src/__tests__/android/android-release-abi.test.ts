@@ -7,6 +7,9 @@ const workflow = readFileSync(
   'utf8',
 );
 const packageJson = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf8'));
+const tauriConfig = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'src-tauri/tauri.conf.json'), 'utf8'),
+);
 const nativeBridge = readFileSync(
   resolve(
     process.cwd(),
@@ -33,10 +36,9 @@ describe('CWA Android release ABIs', () => {
     expect(workflow).toContain('"android-armv7": {url: $tv_url}');
   });
 
-  it('uses a new app version for the corrected TV package', () => {
-    const [major, minor, patch] = packageJson.version.split('.').map(Number);
-    const numericVersion = major * 1_000_000 + minor * 1_000 + patch;
-    expect(numericVersion).toBeGreaterThanOrEqual(12_009);
+  it('tracks upstream in versionName while keeping Android upgrades monotonic', () => {
+    expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+-cwa\.\d+$/);
+    expect(tauriConfig.bundle.android.versionCode).toBeGreaterThanOrEqual(12_026);
   });
 
   it('routes Android backup ZIP selection through the document framework', () => {

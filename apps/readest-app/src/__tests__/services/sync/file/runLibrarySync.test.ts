@@ -5,7 +5,16 @@ import { useLibraryStore } from '@/store/libraryStore';
 import { useFileSyncStore } from '@/store/fileSyncStore';
 import type { SystemSettings } from '@/types/settings';
 
-const syncLibrary = vi.fn().mockResolvedValue({ booksSynced: 0 });
+/** A complete SyncLibraryResult shape; the pass merges every reporting field. */
+const syncResult = (over: Record<string, unknown> = {}) => ({
+  booksSynced: 0,
+  failures: 0,
+  failedBooks: [],
+  indexPushFailed: false,
+  ...over,
+});
+
+const syncLibrary = vi.fn().mockResolvedValue(syncResult());
 const pushBookFile = vi.fn().mockResolvedValue({ uploaded: true });
 const pushBookCover = vi.fn().mockResolvedValue({ uploaded: true });
 const downloadBookFile = vi.fn().mockResolvedValue(true);
@@ -105,8 +114,18 @@ const multiProviderSettings = {
 } as unknown as SystemSettings;
 
 describe('runFileLibrarySyncPass', () => {
+  test.each([
+    { failures: 1 },
+    { indexPushFailed: true },
+  ])('does not record partial sync as successful: %j', async (failure) => {
+    syncLibrary.mockResolvedValueOnce(syncResult(failure));
+    await runFileLibrarySyncPass(envConfig, translationFn);
+    expect(useSettingsStore.getState().settings.webdav?.lastSyncedAt).toBeUndefined();
+    expect(useFileSyncStore.getState().lastErrorByKind.webdav).toBeTruthy();
+  });
+
   beforeEach(() => {
-    syncLibrary.mockReset().mockResolvedValue({ booksSynced: 1 });
+    syncLibrary.mockReset().mockResolvedValue(syncResult({ booksSynced: 1 }));
     useSettingsStore.getState().setSettings(multiProviderSettings);
     useLibraryStore.setState({ library: [makeBook('h1')], libraryLoaded: true });
     useFileSyncStore.setState({ byKind: {}, activeKind: null, lastErrorByKind: {} });
