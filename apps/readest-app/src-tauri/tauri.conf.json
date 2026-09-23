@@ -94,7 +94,7 @@
     },
     "android": {
       "minSdkVersion": 26,
-      "versionCode": 12026
+      "versionCode": 12027
     },
     "iOS": {
       "developmentTeam": "J5W48D69VR",

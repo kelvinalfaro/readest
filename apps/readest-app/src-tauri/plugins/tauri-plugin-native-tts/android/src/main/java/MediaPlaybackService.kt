@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.ActivityOptions
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -109,6 +110,7 @@ internal object MediaSessionActivationState {
 
 class MediaPlaybackService : MediaBrowserServiceCompat() {
     private var mediaSession: MediaSessionCompat? = null
+    private var sessionActivityIntent: PendingIntent? = null
     private lateinit var player: ExoPlayer
     private lateinit var stateBuilder: PlaybackStateCompat.Builder
     private lateinit var audioManager: AudioManager
@@ -317,7 +319,21 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 pendingBookHash = hash
                 pluginEventTrigger?.also { pendingBookHash = null }
             }
-            trigger?.invoke("media-session-play-book", JSObject().apply { put("bookHash", hash) })
+            if (trigger != null) {
+                val deliver = {
+                    trigger("media-session-play-book", JSObject().apply { put("bookHash", hash) })
+                }
+                val service = instance
+                if (service == null || Looper.myLooper() == Looper.getMainLooper()) {
+                    service?.handoffColdTtsToWebView(hash)
+                    deliver()
+                } else {
+                    Handler(Looper.getMainLooper()).post {
+                        service.handoffColdTtsToWebView(hash)
+                        deliver()
+                    }
+                }
+            }
             return trigger != null
         }
 
@@ -472,6 +488,15 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
         fun requestActivation(sessionId: String?, bookHash: String?) {
             val changed = MediaSessionActivationState.requestActivation(sessionId)
             if (bookHash != null) currentBookHash = bookHash
+            val service = instance
+            if (service != null) {
+                val releaseColdOwner = { service.clearColdTtsPlayback() }
+                if (Looper.myLooper() == Looper.getMainLooper()) {
+                    releaseColdOwner()
+                } else {
+                    Handler(Looper.getMainLooper()).post(releaseColdOwner)
+                }
+            }
             if (!changed) return
 
             // Never carry the previous book's decoded bitmap into the new
@@ -481,11 +506,10 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             currentArtworkUri = null
             currentPositionMs = 0L
             currentDurationMs = 0L
-            val service = instance ?: return
+            if (service == null) return
             Handler(Looper.getMainLooper()).post {
                 // Explicit WebView playback takes ownership even if Pause
                 // canceled the pending automatic book-selection handoff.
-                service.clearColdTtsPlayback()
                 service.resetArtworkForBook(bookHash)
             }
         }
@@ -545,6 +569,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         player = ExoPlayer.Builder(this).build()
+        sessionActivityIntent = createSessionActivityPendingIntent()
 
         mediaSession = MediaSessionCompat(baseContext, "ReadestMediaSession").apply {
             stateBuilder = PlaybackStateCompat.Builder().setActions(
@@ -562,16 +587,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 stateBuilder.setState(PlaybackStateCompat.STATE_STOPPED, 0L, 1f).build()
             )
             setCallback(SessionCallback())
-            packageManager.getLaunchIntentForPackage(packageName)?.let { launchIntent ->
-                setSessionActivity(
-                    PendingIntent.getActivity(
-                        this@MediaPlaybackService,
-                        0,
-                        launchIntent,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                    )
-                )
-            }
+            sessionActivityIntent?.let(::setSessionActivity)
             // A browser client can select a book while no TTS session is
             // already playing. Keep the media session command-ready for the
             // lifetime of the bound service; sessionActive separately gates
@@ -589,6 +605,29 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
                 updatePlaybackState()
             }
         })
+    }
+
+    private fun createSessionActivityPendingIntent(): PendingIntent? {
+        val launcherQuery = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .setPackage(packageName)
+        val launcher = packageManager
+            .queryIntentActivities(launcherQuery, PackageManager.MATCH_ALL)
+            .firstOrNull()
+            ?.activityInfo
+        if (launcher == null) {
+            Log.e("MediaPlaybackService", "No launcher activity found for $packageName")
+            return null
+        }
+        val launchIntent = Intent(launcherQuery)
+            .setComponent(ComponentName(launcher.packageName, launcher.name))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 
     private fun activateSession() {
@@ -920,6 +959,12 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
     }
 
     private fun clearColdTtsPlayback() {
+        if (coldTtsActive || coldTts != null) {
+            Log.i(
+                "MediaPlaybackService",
+                "Stopping cold TTS before WebView playback (book=$coldTtsBookHash)",
+            )
+        }
         coldTtsGeneration += 1
         coldTtsActive = false
         coldTtsPaused = false
@@ -1389,7 +1434,7 @@ class MediaPlaybackService : MediaBrowserServiceCompat() {
             setContentTitle(currentTitle)
             setContentText(currentArtist)
             setLargeIcon(currentArtwork)
-            setContentIntent(mediaSession!!.controller.sessionActivity)
+            setContentIntent(sessionActivityIntent)
             setDeleteIntent(MediaButtonReceiver.buildMediaButtonPendingIntent(this@MediaPlaybackService, PlaybackStateCompat.ACTION_STOP))
             setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             setSmallIcon(R.drawable.notification_icon)

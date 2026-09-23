@@ -135,6 +135,35 @@ describe('Android Auto declarations (#3919)', () => {
     // native owner independently of setPluginEventTrigger draining that queue.
     expect(activation).toContain('service.clearColdTtsPlayback()');
     expect(activation).not.toContain('pendingBookHash');
+    expect(activation.indexOf('service.clearColdTtsPlayback()')).toBeLessThan(
+      activation.indexOf('if (!changed) return'),
+    );
+  });
+
+  it('stops cold speech before routing a live car selection into the WebView', () => {
+    const dispatch = mediaPlaybackService.slice(
+      mediaPlaybackService.indexOf('private fun dispatchOrQueueBookPlayback'),
+      mediaPlaybackService.indexOf('private fun cancelPendingBookPlayback'),
+    );
+    expect(dispatch).toContain('service?.handoffColdTtsToWebView(hash)');
+    expect(dispatch.indexOf('handoffColdTtsToWebView(hash)')).toBeLessThan(
+      dispatch.indexOf('deliver()'),
+    );
+  });
+
+  it('publishes an explicit launcher PendingIntent to the session and notification', () => {
+    const createBlock = mediaPlaybackService.slice(
+      mediaPlaybackService.indexOf('override fun onCreate()'),
+      mediaPlaybackService.indexOf('private fun activateSession()'),
+    );
+    const notificationBlock = mediaPlaybackService.slice(
+      mediaPlaybackService.indexOf('private fun buildNotification'),
+      mediaPlaybackService.indexOf('private fun readCallerIdentity'),
+    );
+    expect(mediaPlaybackService).toContain('Intent.CATEGORY_LAUNCHER');
+    expect(mediaPlaybackService).toContain('queryIntentActivities(launcherQuery');
+    expect(createBlock).toContain('sessionActivityIntent?.let(::setSessionActivity)');
+    expect(notificationBlock).toContain('setContentIntent(sessionActivityIntent)');
   });
 
   it('keeps book switches from accepting stale playback or artwork updates', () => {
