@@ -201,15 +201,8 @@ const BookItem: React.FC<BookItemProps> = ({
             </p>
           )}
         </div>
-        {seriesText && (
-          <p
-            className={clsx(
-              'text-neutral-content line-clamp-1',
-              mode === 'grid' ? 'text-xs' : 'text-sm',
-            )}
-          >
-            {seriesText}
-          </p>
+        {mode === 'list' && seriesText && (
+          <p className='text-neutral-content line-clamp-1 text-sm'>{seriesText}</p>
         )}
         {mode === 'list' && (
           <h4 className='text-neutral-content line-clamp-1 text-sm'>
