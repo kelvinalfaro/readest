@@ -29,13 +29,19 @@ const mocks = vi.hoisted(() => ({
   router: { push: vi.fn(), replace: vi.fn() },
   initialize: () => {},
   instance: () => undefined,
+  appService: null as object | null,
 }));
 vi.mock('next/navigation', () => ({
   useRouter: () => mocks.router,
   useSearchParams: () => mocks.params,
 }));
 vi.mock('@/context/EnvContext', () => ({
-  useEnv: () => ({ envConfig: mocks.env, appService: null }),
+  useEnv: () => ({ envConfig: mocks.env, appService: mocks.appService }),
+}));
+vi.mock('@/app/library/components/LibrarySearchResults', () => ({
+  default: ({ books }: { books: Book[] }) => (
+    <div data-testid='content-search-results' data-books={books.map((b) => b.hash).join(',')} />
+  ),
 }));
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ user: null }) }));
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => mocks.translate }));
@@ -180,6 +186,7 @@ const configure = (draft: BookshelfDefinition[]) => {
 };
 beforeEach(() => {
   mocks.params = new URLSearchParams();
+  mocks.appService = null;
   mocks.router.replace.mockClear();
   window.history.replaceState(null, '', '/library');
   useSettingsStore.setState({
@@ -196,6 +203,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe('library bookshelf integration', () => {
+  it('shows the empty library state over a lingering content search', () => {
+    mocks.appService = {};
+    useLibraryStore.setState({ library: [] });
+    render(
+      <Bookshelf
+        {...props}
+        libraryBooks={[]}
+        contentSearch={{
+          query: 'whale',
+          config: { scope: 'book', mode: 'contains', matchCase: false, matchDiacritics: false },
+        }}
+      />,
+    );
+    expect(screen.getByRole('heading', { name: 'Start your library' })).toBeTruthy();
+    expect(screen.queryByTestId('content-search-results')).toBeNull();
+  });
   it('hides enabled shelves without matching books from the library', () => {
     const emptyShelf = bookshelfSchema.parse({
       ...createBookshelf('Empty shelf'),
@@ -570,6 +593,31 @@ describe('library bookshelf integration', () => {
     mocks.params = new URLSearchParams({ groupBy: 'author', group: author.id, shelf: 'default' });
     rerender(<Bookshelf {...props} isSelectMode={false} libraryBooks={seriesBooks} />);
     expect(flags().every((flag) => flag === 'false')).toBe(true);
+  });
+  it('searches book contents only within the opened group', () => {
+    mocks.appService = {};
+    const grouped = books.map((book, index) => ({
+      ...book,
+      groupName: index < 3 ? 'Philosophy' : index < 5 ? 'Philosophy/Ethics' : 'Fiction',
+    }));
+    useSettingsStore.setState({
+      settings: { ...useSettingsStore.getState().settings, libraryGroupBy: 'group' },
+    });
+    useLibraryStore.setState({ library: grouped, groups: { philosophy: 'Philosophy' } });
+    mocks.params = new URLSearchParams('q=Book&search=text&group=philosophy&shelf=default');
+    render(
+      <Bookshelf
+        {...props}
+        isSelectMode={false}
+        libraryBooks={grouped}
+        contentSearch={{
+          query: 'Book',
+          config: { scope: 'book', mode: 'contains', matchCase: false, matchDiacritics: false },
+        }}
+      />,
+    );
+    const searched = screen.getByTestId('content-search-results').dataset['books']!.split(',');
+    expect(searched.sort()).toEqual(['0', '1', '2', '3', '4']);
   });
   it('keeps an opened group while a search matches nothing', () => {
     window.history.replaceState(null, '', '/library?q=nope&group=g&shelf=default');

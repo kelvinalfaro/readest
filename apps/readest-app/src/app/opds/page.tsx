@@ -42,6 +42,7 @@ import {
   fetchWithAuth,
   probeAuth,
   needsProxy,
+  needsNativeImageFetch,
   probeFilename,
 } from './utils/opdsReq';
 import { getPublicationDetailHref, parsePublicationDocument } from './utils/opdsPublication';
@@ -75,6 +76,7 @@ import { addCWABookSource, getCWASettings, resolveCWAUrl } from '@/services/cwa'
 import {
   addBookOrbitBookSource,
   getBookOrbitSettings,
+  getBookOrbitOPDSUrl,
 } from '@/services/bookorbit/librarySubscriptions';
 import { computeOpdsCatalogContentId } from '@/services/sync/adapters/opdsCatalog';
 import { uniqueId } from '@/utils/misc';
@@ -83,6 +85,7 @@ import {
   isAudiobookAcquisition,
   saveDownloadedAudiobook,
 } from '@/services/opds/audiobookAsset';
+import { getHorizontalInsetStyle } from '@/utils/insets';
 
 type ViewMode = 'feed' | 'publication' | 'search' | 'loading' | 'error';
 
@@ -112,7 +115,7 @@ export default function BrowserPage() {
   // already imported (shown as "Open & Read" instead of "Download"), and
   // re-evaluate whenever a download finishes or a book is removed.
   const library = useLibraryStore((s) => s.library);
-  const { safeAreaInsets, isRoundedWindow } = useThemeStore();
+  const { safeAreaInsets, isRoundedWindow, isIPhoneDuo } = useThemeStore();
   const { settings } = useSettingsStore();
   const [viewMode, setViewMode] = useState<ViewMode>('loading');
   const [state, setState] = useState<OPDSState>({
@@ -141,12 +144,16 @@ export default function BrowserPage() {
   const bookorbitSubscription = bookorbit.subscriptions.find(
     (subscription) => subscription.id === bookorbitSubscriptionId,
   );
+  const bookorbitRootUrl =
+    searchParams?.get('from') === 'bookorbit' && !bookorbitSubscription
+      ? getBookOrbitOPDSUrl(bookorbit)
+      : '';
   const effectiveCatalogUrl = cwaSubscription
     ? resolveCWAUrl(cwa, cwaSubscription.url)
-    : bookorbitSubscription?.url || catalogUrl;
+    : bookorbitSubscription?.url || bookorbitRootUrl || catalogUrl;
   const catalog = settings.opdsCatalogs?.find((catalog) => catalog.id === catalogId);
   const catalogSourceId =
-    cwaSubscription || bookorbitSubscription
+    cwaSubscription || bookorbitSubscription || bookorbitRootUrl
       ? computeOpdsCatalogContentId(effectiveCatalogUrl)
       : catalog?.contentId || catalogId || catalogUrl;
   // Captured once at mount so the restore effect targets exactly the
@@ -420,7 +427,7 @@ export default function BrowserPage() {
       const catalog = settings.opdsCatalogs?.find((cat) => cat.id === catalogId);
       const { username, password } = cwaSubscription
         ? cwa
-        : bookorbitSubscription
+        : bookorbitSubscription || bookorbitRootUrl
           ? { username: bookorbit.opdsUsername, password: bookorbit.opdsPassword }
           : catalog || {};
       if (username || password) {
@@ -431,7 +438,9 @@ export default function BrowserPage() {
         passwordRef.current = null;
       }
       customHeadersRef.current = normalizeCustomHeaders(
-        bookorbitSubscription ? bookorbit.customHeaders : catalog?.customHeaders,
+        bookorbitSubscription || bookorbitRootUrl
+          ? bookorbit.customHeaders
+          : catalog?.customHeaders,
       );
       if (libraryLoaded) {
         lastLoadedKeyRef.current = loadKey;
@@ -921,7 +930,12 @@ export default function BrowserPage() {
       const username = usernameRef.current || '';
       const password = passwordRef.current || '';
       const customHeaders = customHeadersRef.current;
-      if (!username && !password && Object.keys(customHeaders).length === 0) {
+      if (
+        !username &&
+        !password &&
+        Object.keys(customHeaders).length === 0 &&
+        !needsNativeImageFetch(url)
+      ) {
         return needsProxy(url) ? getProxiedURL(url, '', true) : url;
       }
 
@@ -1215,6 +1229,8 @@ export default function BrowserPage() {
         className='relative top-0 z-40 w-full'
         style={{
           paddingTop: `${safeAreaInsets?.top || 0}px`,
+          // Clear iPhone Duo's side status strip (#6307).
+          ...getHorizontalInsetStyle(safeAreaInsets, isIPhoneDuo),
         }}
       >
         <Navigation

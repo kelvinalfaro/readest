@@ -15,6 +15,7 @@ import {
   generateDarkPalette,
 } from '@/styles/themes';
 import { createFontCSS, CustomFont } from '@/styles/fonts';
+import { isDialogueHighlightActive } from './dialogueHighlight';
 import { readStoredAmbientIsDarkMode } from './ambientLight';
 import { INLINE_FORMATTING_SELECTOR } from './inlineTags';
 import { getOSPlatform } from './misc';
@@ -253,6 +254,64 @@ const getEinkSelectionStyles = () => {
   `;
 };
 
+// Chromium's default selection colors force near-black text (on blue when
+// focused, on grey when not), unreadable on a dark page — most visibly on the
+// selection a lookup popup holds while it has focus (#6503). Setting only the
+// background keeps each element's own text color, and pdf.js's transparent
+// text layer stays transparent.
+const getDarkSelectionStyles = (primary: string) => `
+    ::selection {
+      background: color-mix(in srgb, ${primary} 40%, transparent);
+    }
+  `;
+
+const getDialogueHighlightStyles = (viewSettings: ViewSettings, themeCode: ThemeCode) => {
+  // Background and text are independent switches; off means the default
+  // (theme primary tint for the background, inherited text). An empty stored
+  // value (e.g. carried over from older configs) also falls back to default.
+  const bgBase = viewSettings.dialogueHighlight
+    ? viewSettings.dialogueHighlightCustomColor && viewSettings.dialogueHighlightColor
+      ? viewSettings.dialogueHighlightColor
+      : themeCode.primary
+    : null;
+  const bgDecl = (percent: number) =>
+    bgBase
+      ? `\n    background-color: color-mix(in srgb, ${bgBase} ${percent}%, transparent) !important;`
+      : '';
+  const text =
+    viewSettings.dialogueHighlightCustomTextColor && viewSettings.dialogueHighlightTextColor
+      ? `\n    color: ${viewSettings.dialogueHighlightTextColor} !important;`
+      : '';
+  return `
+  /* Dialogue lines tinted with the custom color or, by default, the theme's
+     primary color. !important so the tint survives "Override Book Color",
+     which repaints spans/paragraphs with the theme background at the same
+     importance level but lower specificity. */
+  .readest-dialogue {${bgDecl(22)}${text}
+    border-radius: 0.2em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  .readest-dialogue-block {${bgDecl(12)}${text}
+    border-radius: 0.3em;
+  }${
+    viewSettings.dialogueHighlightItalic
+      ? `
+  /* Italic runs marked like quoted dialogue; nested marks drop their own
+     tint so overlapping translucent backgrounds don't stack. */
+  :is(i, em) {${bgDecl(22)}${text}
+    border-radius: 0.2em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+  :is(i, em) :is(i, em, .readest-dialogue), .readest-dialogue :is(i, em) {
+    background-color: transparent !important;
+  }`
+      : ''
+  }
+`;
+};
+
 const getColorStyles = (
   overrideColor: boolean,
   invertImgColorInDark: boolean,
@@ -274,7 +333,7 @@ const getColorStyles = (
     html, body {
       color: ${fg};
     }
-    ${isEink ? getEinkSelectionStyles() : ''}
+    ${isEink ? getEinkSelectionStyles() : isDarkMode ? getDarkSelectionStyles(primary) : ''}
     html[has-background], body[has-background] {
       --background-set: var(--theme-bg-color);
     }
@@ -393,6 +452,7 @@ const getColorStyles = (
 };
 
 export const LINK_TOUCH_HOLD_CLASS = 'link-touch-hold';
+export const TEXT_SELECTED_CLASS = 'text-selected';
 
 const getPageLayoutStyles = (
   marginTop: number,
@@ -450,6 +510,11 @@ const getPageLayoutStyles = (
     content: '';
     position: absolute;
     inset: -10px;
+  }
+  /* the enlarged area swallows the text around a link, so a selection dragged
+     next to a footnote marker snaps away (#6566); set while text is selected */
+  html.${TEXT_SELECTED_CLASS} a::before {
+    pointer-events: none;
   }
 
   .${SCROLL_WRAPPER_CLASS} {
@@ -803,7 +868,77 @@ export const getDictStyles = (bg: string, fg: string, isDarkMode: boolean) => {
   `;
 };
 
-const getTranslationStyles = (showSource: boolean) => `
+const parseComputedRgb = (value: string) => {
+  const m = value.match(/^rgba?\(([\d.]+), ([\d.]+), ([\d.]+)(?:, ([\d.]+))?\)$/);
+  if (!m) return null;
+  const [r, g, b] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  return {
+    r,
+    g,
+    b,
+    a: m[4] === undefined ? 1 : Number(m[4]),
+    brightness: 0.299 * r + 0.587 * g + 0.114 * b,
+  };
+};
+
+/**
+ * Lift dictionary text colors that would vanish on the dark popup (#6618).
+ *
+ * Dictionaries are authored for a light page and set dark text colors in bundled CSS, embedded
+ * `<style>`, inline styles or `<font color>`; reading computed colors covers all of them. A dark
+ * color gets its perceived brightness mirrored (Y -> 255 - Y) by an equal shift on every channel,
+ * which keeps its hue and the order of the dictionary's text shades. Text on a light box the
+ * dictionary paints itself is left as authored.
+ */
+export const liftDarkTextColors = (root: Element) => {
+  // The surface behind `root` is the popup's, found past a shadow root's host.
+  const parentOf = (el: Element) => {
+    const rootNode = el.getRootNode();
+    return el.parentElement ?? (rootNode instanceof ShadowRoot ? rootNode.host : null);
+  };
+  let outerOnLight = false;
+  for (let el = parentOf(root); el; el = parentOf(el)) {
+    const bg = parseComputedRgb(getComputedStyle(el).backgroundColor);
+    if (bg && bg.a > 0.5) {
+      outerOnLight = bg.brightness >= 128;
+      break;
+    }
+  }
+  const onLightBox = new Map<Element, boolean>();
+  const lifts: [HTMLElement, string][] = [];
+  for (const el of [root, ...root.querySelectorAll('*')]) {
+    const style = getComputedStyle(el);
+    const bg = parseComputedRgb(style.backgroundColor);
+    const parentOnLight = el === root ? outerOnLight : !!onLightBox.get(el.parentElement!);
+    const onLight = bg && bg.a > 0.5 ? bg.brightness >= 128 : parentOnLight;
+    onLightBox.set(el, onLight);
+    const fg = parseComputedRgb(style.color);
+    if (!fg || onLight || fg.brightness >= 128) continue;
+    const shift = Math.round(255 - 2 * fg.brightness);
+    const [r, g, b] = [fg.r, fg.g, fg.b].map((c) => Math.min(255, c + shift));
+    lifts.push([el as HTMLElement, `rgba(${r}, ${g}, ${b}, ${fg.a})`]);
+  }
+  // Write after reading so the loop doesn't force a style recalc per element.
+  for (const [el, color] of lifts) el.style.setProperty('color', color, 'important');
+};
+
+const getTranslatedTextStyles = (viewSettings: ViewSettings) => {
+  const { translationFont, translationFontStyle, translationFontSize, translationColor } =
+    viewSettings;
+  return [
+    translationFont && `font-family: var(--${translationFont}) !important;`,
+    translationFontStyle?.includes('italic') && 'font-style: italic !important;',
+    translationFontStyle?.includes('bold') && 'font-weight: bold !important;',
+    translationFontSize &&
+      translationFontSize !== 1 &&
+      `font-size: ${translationFontSize}em !important;`,
+    translationColor && `color: ${translationColor} !important;`,
+  ]
+    .filter(Boolean)
+    .join('\n    ');
+};
+
+const getTranslationStyles = (viewSettings: ViewSettings) => `
   .translation-source {
   }
   .translation-target {
@@ -818,7 +953,8 @@ const getTranslationStyles = (showSource: boolean) => `
   }
   .translation-target-block {
     display: block !important;
-    ${showSource ? 'margin: 0.5em 0 !important;' : ''}
+    ${viewSettings.showTranslateSource ? 'margin: 0.5em 0 !important;' : ''}
+    ${getTranslatedTextStyles(viewSettings)}
   }
   .translation-target-toc {
     display: block !important;
@@ -991,9 +1127,12 @@ export const getStyles = (
     viewSettings.backgroundTextureId,
     viewSettings.isEink,
   );
-  const translationStyles = getTranslationStyles(viewSettings.showTranslateSource!);
+  const translationStyles = getTranslationStyles(viewSettings);
   const warichuStyles = getWarichuStyles();
   const rubyStyles = getRubyStyles(viewSettings);
+  const dialogueStyles = isDialogueHighlightActive(viewSettings)
+    ? getDialogueHighlightStyles(viewSettings, themeCode)
+    : '';
   const userStylesheet = viewSettings.userStylesheet!;
   // The `@namespace` declaration must lead the stylesheet: a `@namespace` rule
   // placed after any style or `@font-face` rule is invalid and silently ignored,
@@ -1001,7 +1140,7 @@ export const getStyles = (
   // the footnote aside's border show as a stray horizontal line (#4438). Keep it
   // ahead of the inlined custom `@font-face` rules.
   const epubNamespace = `@namespace epub "http://www.idpf.org/2007/ops";`;
-  return `${epubNamespace}\n${customFontFaces}\n${pageLayoutStyles}\n${paragraphLayoutStyles}\n${fontStyles}\n${colorStyles}\n${translationStyles}\n${warichuStyles}\n${rubyStyles}\n${userStylesheet}`;
+  return `${epubNamespace}\n${customFontFaces}\n${pageLayoutStyles}\n${paragraphLayoutStyles}\n${fontStyles}\n${colorStyles}\n${dialogueStyles}\n${translationStyles}\n${warichuStyles}\n${rubyStyles}\n${userStylesheet}`;
 };
 
 // Build a CSS chunk of `@font-face` rules for the given user custom
@@ -1032,7 +1171,7 @@ export const applyTranslationStyle = (viewSettings: ViewSettings) => {
 
   const styleElement = document.createElement('style');
   styleElement.id = styleId;
-  styleElement.textContent = getTranslationStyles(viewSettings.showTranslateSource);
+  styleElement.textContent = getTranslationStyles(viewSettings);
 
   document.head.appendChild(styleElement);
 };
@@ -1635,6 +1774,20 @@ export const getOverlayerBlendMode = ({
   return isDarkPage ? 'screen' : 'multiply';
 };
 
+/**
+ * The colors the PDF renderer recolors pages to, or undefined to leave pages as
+ * the book has them. Embedded photos keep their own colors unless images are to
+ * be inverted in dark mode too (#6548).
+ */
+export const getPDFPageColors = (viewSettings: ViewSettings, themeCode: ThemeCode) =>
+  viewSettings.applyThemeToPDF
+    ? {
+        background: themeCode.bg,
+        foreground: themeCode.fg,
+        keepImages: !(themeCode.isDarkMode && viewSettings.invertImgColorInDark),
+      }
+    : undefined;
+
 export const applyFixedlayoutStyles = (
   document: Document,
   viewSettings: ViewSettings,
@@ -1655,7 +1808,14 @@ export const applyFixedlayoutStyles = (
   const invertImgColorInDark = viewSettings.invertImgColorInDark!;
   const contrast = viewSettings.contrast ?? 100;
   const imgFilters: string[] = [];
-  if (isDarkMode && invertImgColorInDark) imgFilters.push('invert(100%)');
+  // The renderer already recolors a themed PDF page, images included when they
+  // are to be inverted; inverting or blending it again would darken or flip the
+  // theme colors (#6548).
+  const isThemedPDF = format === 'PDF' && viewSettings.applyThemeToPDF;
+  // hue-rotate flips the hues back, so a blue link stays blue
+  if (isDarkMode && invertImgColorInDark && !isThemedPDF) {
+    imgFilters.push('invert(100%) hue-rotate(180deg)');
+  }
   if (contrast !== 100) imgFilters.push(`contrast(${contrast}%)`);
   const imgFilter = imgFilters.length ? `filter: ${imgFilters.join(' ')};` : '';
   const darkMixBlendMode = bg === '#000000' ? 'luminosity' : 'overlay';
@@ -1690,10 +1850,16 @@ export const applyFixedlayoutStyles = (
     }
     img, canvas {
       ${imgFilter}
-      ${overrideColor ? `mix-blend-mode: ${isDarkMode ? darkMixBlendMode : 'multiply'};` : ''}
+      ${overrideColor && !isThemedPDF ? `mix-blend-mode: ${isDarkMode ? darkMixBlendMode : 'multiply'};` : ''}
     }
     img.singlePage {
       position: relative;
+    }
+    /* An unsized <image> draws at its natural size, which is the page size,
+       but a percentage-height svg in an auto-height block is only 150px tall
+       and would clip it to a strip (#6530). */
+    svg:not([viewBox]):has(> image:not([width])) {
+      overflow: visible;
     }
   `;
   document.head.appendChild(style);
