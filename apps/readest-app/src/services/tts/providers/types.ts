@@ -41,6 +41,14 @@ export class SpeechSynthesisPermanentError extends Error {
   }
 }
 
+// A session-wide failure: retrying or skipping sentences cannot restore audio.
+export class SpeechSynthesisFatalError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'SpeechSynthesisFatalError';
+  }
+}
+
 export interface SpeechProvider {
   // Stable identifier: persisted voice/client preferences and cache
   // namespaces key off it, so renaming one is a migration.

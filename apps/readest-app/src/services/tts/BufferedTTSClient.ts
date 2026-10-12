@@ -21,6 +21,7 @@ import {
 import { CachingProvider } from './providers/cache';
 import {
   SpeechProvider,
+  SpeechSynthesisFatalError,
   SpeechSynthesisPermanentError,
   SpeechSynthesisRequest,
 } from './providers/types';
@@ -165,6 +166,7 @@ export class BufferedTTSClient implements TTSClient {
         return { data: audio, boundaries };
       } catch (err) {
         if (err instanceof SpeechSynthesisPermanentError) throw err;
+        if (err instanceof SpeechSynthesisFatalError) throw err;
         lastError = err;
         console.warn(`TTS synthesis attempt ${attempt}/${maxAttempts} failed`, err);
         if (attempt < maxAttempts && !signal.aborted) {
@@ -376,6 +378,10 @@ export class BufferedTTSClient implements TTSClient {
         try {
           audio = await this.#synthesizeWithRetry(mark.language, mark.text, voiceId, signal);
         } catch (error) {
+          if (error instanceof SpeechSynthesisFatalError) {
+            queue.push({ kind: 'error', message: error.message });
+            return;
+          }
           if (error instanceof SpeechSynthesisPermanentError) {
             // Genuinely unsynthesizable sentence (server returned no audio):
             // skip it and keep going — a few bad sentences must not stop a
