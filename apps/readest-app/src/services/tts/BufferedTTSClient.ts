@@ -177,7 +177,7 @@ export class BufferedTTSClient implements TTSClient {
         return { data: audio, boundaries };
       } catch (err) {
         if (err instanceof SpeechSynthesisPermanentError) throw err;
-        if (err instanceof SpeechSynthesisFatalError) throw err;
+        if (err instanceof SpeechSynthesisFatalError && !err.retryable) throw err;
         // Stopped on purpose (stop, seek, voice change): not a failure.
         if (signal.aborted) return undefined;
         lastError = err;

@@ -106,7 +106,7 @@ describe('EdgeSpeechProvider', () => {
     ).rejects.toBeInstanceOf(SpeechSynthesisPermanentError);
   });
 
-  test('propagates transient errors unchanged for the client retry path', async () => {
+  test('classifies a transient WebSocket failure for retries without a silent skip', async () => {
     const provider = await initializedProvider();
     h.createAudioData.mockRejectedValue(new Error('network error'));
     await expect(
@@ -114,7 +114,7 @@ describe('EdgeSpeechProvider', () => {
         { lang: 'en', text: 'hello', voice: 'en-US-AriaNeural', pitch: 1.0 },
         new AbortController().signal,
       ),
-    ).rejects.toThrow('network error');
+    ).rejects.toMatchObject({ name: 'SpeechSynthesisFatalError', retryable: true });
   });
 
   test('stops at the first cache miss after a failed Edge startup probe', async () => {
@@ -153,6 +153,56 @@ describe('EdgeSpeechProvider', () => {
     expect(h.create).toHaveBeenCalledTimes(2);
     expect(h.createAudioData).toHaveBeenCalledTimes(2);
     expect(result.audio.byteLength).toBe(4);
+  });
+
+  test('keeps the original protocol for concurrent WebSocket calls', async () => {
+    const provider = new EdgeSpeechProvider(() => true);
+    await provider.init();
+    let finishProbe!: (response: Response) => void;
+    h.create.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishProbe = resolve;
+        }),
+    );
+    let failSecond!: (error: Error) => void;
+    h.createAudioData.mockRejectedValueOnce(new Error('WebSocket error')).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          failSecond = reject;
+        }),
+    );
+    const request = { lang: 'en', text: 'keep reading', voice: 'en-US-AriaNeural', pitch: 1.0 };
+    const first = provider.synthesize(request, new AbortController().signal);
+    const second = provider.synthesize(request, new AbortController().signal);
+    await vi.waitFor(() => expect(h.lastConstructedProtocol).toBe('https'));
+    failSecond(new Error('WebSocket error'));
+    finishProbe(new Response());
+    await expect(first).resolves.toMatchObject({ audio: expect.any(ArrayBuffer) });
+    await expect(second).resolves.toMatchObject({ audio: expect.any(ArrayBuffer) });
+  });
+
+  test('does not synthesize through HTTPS after cancellation during its probe', async () => {
+    const provider = new EdgeSpeechProvider(() => true);
+    await provider.init();
+    let finishProbe!: (response: Response) => void;
+    h.create.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishProbe = resolve;
+        }),
+    );
+    h.createAudioData.mockRejectedValueOnce(new Error('WebSocket error'));
+    const abort = new AbortController();
+    const pending = provider.synthesize(
+      { lang: 'en', text: 'keep reading', voice: 'en-US-AriaNeural', pitch: 1.0 },
+      abort.signal,
+    );
+    await vi.waitFor(() => expect(h.lastConstructedProtocol).toBe('https'));
+    abort.abort();
+    finishProbe(new Response());
+    await expect(pending).rejects.toThrow('WebSocket error');
+    expect(h.createAudioData).toHaveBeenCalledTimes(1);
   });
 
   test('stops at the failed sentence when the HTTPS route also fails', async () => {

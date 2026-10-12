@@ -112,6 +112,20 @@ describe('BufferedTTSClient with a windowed provider', () => {
       expect(synthesize).toHaveBeenCalledTimes(1);
     });
 
+    test('retryable route errors stop playback after retries without skipping text', async () => {
+      const synthesize = vi.fn(async () => {
+        throw new types.SpeechSynthesisFatalError('Edge TTS is unavailable.', {
+          retryable: true,
+        });
+      });
+      const client = await start(makeProvider({ synthesize }));
+      const { events, done } = speak(client, new AbortController().signal);
+      await done;
+      expect(events.map((event) => event.code)).toEqual(['error']);
+      expect(events[0]!.message).toBe('Edge TTS is unavailable.');
+      expect(synthesize).toHaveBeenCalledTimes(3);
+    });
+
     test('warmSentence rethrows them; other failures still return false', async () => {
       const { CachingProvider } = await import('@/services/tts/providers/cache');
       const store = { get: async () => null, put: async () => {} };

@@ -70,6 +70,7 @@ export class EdgeSpeechProvider implements SpeechProvider {
     signal: AbortSignal,
   ): Promise<SpeechSynthesisResult> {
     const tts = this.#tts;
+    const protocol = this.#protocol;
     if (!tts) throw new Error('EdgeSpeechProvider not initialized');
     try {
       // Rate pinned to 1.0: keeps the audio cache rate-independent; the
@@ -87,9 +88,9 @@ export class EdgeSpeechProvider implements SpeechProvider {
       let failure = err;
       // A startup probe can pass and a later sentence can still lose its
       // WebSocket. Retry that sentence through the account-backed route once.
-      if (!signal.aborted && this.#protocol === 'wss' && this.canUseHttps()) {
+      if (!signal.aborted && protocol === 'wss' && this.canUseHttps()) {
         this.#httpsFallback ??= this.init('https');
-        if (await this.#httpsFallback) {
+        if ((await this.#httpsFallback) && !signal.aborted) {
           try {
             const { data, boundaries } = await this.#tts!.createAudioData({
               lang: req.lang,
@@ -104,17 +105,24 @@ export class EdgeSpeechProvider implements SpeechProvider {
           }
         }
       }
+      if (signal.aborted) throw failure;
       const message = failure instanceof Error ? failure.message : String(failure);
       // A failed startup probe can be masked by cached sentences. Stop at the
       // first uncached failure instead of silently advancing through the book.
       // A proxy failure or explicit 403 is a service refusal even when the
       // startup probe succeeded. Neither route can speak this sentence.
-      if (this.#probeFailed || this.#protocol === 'https' || /\b403\b/.test(message)) {
+      if (this.#probeFailed || protocol === 'https' || /\b403\b/.test(message)) {
         throw new SpeechSynthesisFatalError('Edge TTS is unavailable.', { cause: failure });
       }
       // Permanent for this sentence: Edge answered without audio frames.
       if (failure instanceof Error && failure.message === 'No audio data received.') {
         throw new SpeechSynthesisPermanentError(failure.message, { cause: failure });
+      }
+      if (protocol === 'wss' && !this.canUseHttps()) {
+        throw new SpeechSynthesisFatalError('Edge TTS is unavailable.', {
+          cause: failure,
+          retryable: true,
+        });
       }
       throw failure;
     }

@@ -45,9 +45,12 @@ export class SpeechSynthesisPermanentError extends Error {
 // cannot help, e.g. the daily synthesis quota is used up. The buffered client
 // stops at once instead of retrying or skipping ahead.
 export class SpeechSynthesisFatalError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly retryable: boolean;
+
+  constructor(message: string, options?: ErrorOptions & { retryable?: boolean }) {
     super(message, options);
     this.name = 'SpeechSynthesisFatalError';
+    this.retryable = options?.retryable ?? false;
   }
 }
 
