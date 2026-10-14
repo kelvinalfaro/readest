@@ -1285,6 +1285,7 @@ export default function BrowserPage() {
             onAddCatalog={
               cwaSubscription || bookorbitSubscription ? undefined : handleOpenAddCatalog
             }
+            scrollKey={state.currentURL}
           />
         )}
 

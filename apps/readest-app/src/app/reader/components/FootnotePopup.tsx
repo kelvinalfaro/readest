@@ -14,11 +14,13 @@ import { useCustomFontStore } from '@/store/customFontStore';
 import { useResponsiveSize } from '@/hooks/useResponsiveSize';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
+  applyLinkHitArea,
   getBaseFontFamily,
   getBaseFontSize,
   getFootnoteStyles,
   getStyles,
   getThemeCode,
+  keepTextAlignment,
 } from '@/utils/style';
 import { getPopupPosition, getPosition, Position } from '@/utils/sel';
 import { getPopupBounds, offsetPosition, PopupBounds } from '@/utils/insets';
@@ -317,6 +319,7 @@ const FootnotePopup: React.FC<FootnotePopupProps> = ({
       popupView.addEventListener('load', (e: CustomEvent) => {
         const { doc, index } = e.detail as { doc: Document; index: number };
         const bookData = getBookData(bookKey)!;
+        keepTextAlignment(doc);
         mountAdditionalFonts(doc, isCJKLang(bookData.book?.primaryLanguage));
         getLoadedFonts().forEach((font) => {
           mountCustomFont(doc, font);
@@ -452,6 +455,8 @@ const FootnotePopup: React.FC<FootnotePopupProps> = ({
       const detail = (e as CustomEvent).detail;
       // console.log('render footnote', detail);
       const { view, href, index, extract } = detail;
+      const popupDoc = (view as FoliateView).renderer.getContents?.()[0]?.doc;
+      if (popupDoc) applyLinkHitArea(popupDoc);
       footnoteHrefRef.current = href;
       setSourceHref(getJumpHref(href));
       resetPopupAnnotationState({ index: index ?? -1, extract: extract ?? null });

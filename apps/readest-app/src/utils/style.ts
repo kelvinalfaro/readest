@@ -81,6 +81,20 @@ export const getBaseFontFamily = (viewSettings: ViewSettings): string => {
 };
 
 /**
+ * Both body font chains from the user's font settings, for top-level UI that
+ * offers a serif / sans-serif choice (the quote card).
+ */
+export const getFontFamilies = (viewSettings: ViewSettings) => {
+  const families = buildFontFamilyLists(
+    viewSettings.serifFont!,
+    viewSettings.sansSerifFont!,
+    viewSettings.monospaceFont!,
+    viewSettings.defaultCJKFont!,
+  );
+  return { serif: families.serif, sans: families.sansSerif };
+};
+
+/**
  * The body font size, in CSS px, that the reader applies to the book, for
  * top-level UI that shows book text outside the iframe.
  */
@@ -321,6 +335,9 @@ const getColorStyles = (
 ) => {
   const { bg, fg, primary, isDarkMode } = themeCode;
   const hasBackgroundTexture = !!backgroundTextureId && backgroundTextureId !== 'none';
+  // Over a background texture, Override Book Color still forces the text
+  // colors but fills backgrounds with transparent so the texture shows (#6712).
+  const overrideBg = hasBackgroundTexture ? 'transparent' : bg;
   const colorStyles = `
     html {
       --bg-texture-id: ${backgroundTextureId};
@@ -346,12 +363,12 @@ const getColorStyles = (
     }
     section, aside, blockquote, article, nav, header, footer, main, figure,
     div, p, font, h1, h2, h3, h4, h5, h6, li, span {
-      ${overrideColor && !hasBackgroundTexture ? `background-color: ${bg} !important;` : ''}
-      ${overrideColor && !hasBackgroundTexture ? `color: ${fg} !important;` : ''}
-      ${overrideColor && !hasBackgroundTexture ? `border-color: ${fg} !important;` : ''}
+      ${overrideColor ? `background-color: ${overrideBg} !important;` : ''}
+      ${overrideColor ? `color: ${fg} !important;` : ''}
+      ${overrideColor ? `border-color: ${fg} !important;` : ''}
     }
     pre, span { /* inline code blocks */
-      ${overrideColor ? `background-color: ${bg} !important;` : ''}
+      ${overrideColor ? `background-color: ${overrideBg} !important;` : ''}
     }
     a:any-link {
       ${overrideColor ? `color: ${primary} !important;` : isDarkMode ? `color: lightblue;` : ''}
@@ -453,6 +470,8 @@ const getColorStyles = (
 
 export const LINK_TOUCH_HOLD_CLASS = 'link-touch-hold';
 export const TEXT_SELECTED_CLASS = 'text-selected';
+export const LINK_HIT_AREA_CLASS = 'link-hit-area';
+export const MAX_ENLARGED_LINKS = 1000;
 
 const getPageLayoutStyles = (
   marginTop: number,
@@ -502,11 +521,11 @@ const getPageLayoutStyles = (
   figure > div:has(img) {
     height: auto !important;
   }
-  /* enlarge the clickable area of links */
-  a {
+  /* enlarge the clickable area of links, in documents opted in by applyLinkHitArea */
+  html.${LINK_HIT_AREA_CLASS} a {
     position: relative !important;
   }
-  a::before {
+  html.${LINK_HIT_AREA_CLASS} a::before {
     content: '';
     position: absolute;
     inset: -10px;
@@ -651,6 +670,8 @@ const getPageLayoutStyles = (
 // Paragraph-scoped CSS controlled by the Paragraph section of the Layout
 // panel. Gated by BookStyle.useBookLayout: when true, this chunk is skipped
 // and the book's own paragraph formatting takes over.
+const CJK_LANGS = ['zh', 'ja', 'ko'];
+const CJK_LANG_SELECTOR = CJK_LANGS.map((lang) => `:lang(${lang})`).join(', ');
 const getParagraphLayoutStyles = (
   overrideLayout: boolean,
   paragraphMargin: number,
@@ -749,7 +770,10 @@ const getParagraphLayoutStyles = (
   li p, ol p, ul p, td p {
     text-indent: initial !important;
   }
-  p {
+  /* Some converted books use an inline-only <blockquote> for every paragraph
+     (#6656); under override it is spaced like a <p>, while a quote wrapping
+     block content keeps its indent. */
+  p${overrideLayout ? `, blockquote:not(:has(*:not(${INLINE_FORMATTING_SELECTOR})))` : ''} {
     ${vertical ? `margin-left: ${paragraphMargin}em ${overrideLayout ? '!important' : ''};` : ''}
     ${vertical ? `margin-right: ${paragraphMargin}em ${overrideLayout ? '!important' : ''};` : ''}
     ${vertical ? `margin-top: unset ${overrideLayout ? '!important' : ''};` : ''}
@@ -769,7 +793,7 @@ const getParagraphLayoutStyles = (
     display: flow-root; 
   }
 
-  :lang(zh), :lang(ja), :lang(ko) {
+  ${CJK_LANG_SELECTOR} {
     widows: 1;
     orphans: 1;
   }
@@ -790,6 +814,23 @@ const getParagraphLayoutStyles = (
 
   .nonindent, .noindent {
     text-indent: unset !important;
+  }
+`;
+
+// Zero-specificity fallback for the paragraph chunk's CJK widow/orphan lift
+// above. Use Book Layout skips that chunk wholesale, taking the lift with it,
+// so a CJK book wearing the placeholder `en` its conversion tool stamped
+// (#6672) falls back to the UA default of 2 and the page-bottom gap the lift
+// closes comes back. It is scoped to the section root on purpose: a direct
+// declaration beats an inherited value at any specificity, so an element-wide
+// fallback would stomp widows/orphans the book declares on html or body and
+// expects its paragraphs to inherit. From the root the 1s flow to every
+// paragraph the book says nothing about, while a declaration at any ancestor
+// — or on the paragraph itself — still wins.
+const getCJKLineFlowStyles = () => `
+  :where(${CJK_LANGS.map((lang) => `html:lang(${lang})`).join(', ')}) {
+    widows: 1;
+    orphans: 1;
   }
 `;
 
@@ -1130,6 +1171,7 @@ export const getStyles = (
   const translationStyles = getTranslationStyles(viewSettings);
   const warichuStyles = getWarichuStyles();
   const rubyStyles = getRubyStyles(viewSettings);
+  const cjkLineFlowStyles = getCJKLineFlowStyles();
   const dialogueStyles = isDialogueHighlightActive(viewSettings)
     ? getDialogueHighlightStyles(viewSettings, themeCode)
     : '';
@@ -1140,7 +1182,7 @@ export const getStyles = (
   // the footnote aside's border show as a stray horizontal line (#4438). Keep it
   // ahead of the inlined custom `@font-face` rules.
   const epubNamespace = `@namespace epub "http://www.idpf.org/2007/ops";`;
-  return `${epubNamespace}\n${customFontFaces}\n${pageLayoutStyles}\n${paragraphLayoutStyles}\n${fontStyles}\n${colorStyles}\n${dialogueStyles}\n${translationStyles}\n${warichuStyles}\n${rubyStyles}\n${userStylesheet}`;
+  return `${epubNamespace}\n${customFontFaces}\n${pageLayoutStyles}\n${paragraphLayoutStyles}\n${cjkLineFlowStyles}\n${fontStyles}\n${colorStyles}\n${dialogueStyles}\n${translationStyles}\n${warichuStyles}\n${rubyStyles}\n${userStylesheet}`;
 };
 
 // Build a CSS chunk of `@font-face` rules for the given user custom
@@ -1196,8 +1238,11 @@ export const transformStylesheet = (
     const hasTextAlignCenter = /text-align\s*:\s*center\s*[;$]/.test(block);
     const hasTextIndentZero = /text-indent\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?\s*[;$]/.test(block);
 
+    // Only the zero indent is pinned, so centered text isn't pushed off center
+    // by the Paragraph Indent override. The centering itself is kept by
+    // keepTextAlignment; making it !important here would beat a more specific
+    // author rule that left-aligns the element (#6723).
     if (hasTextAlignCenter && hasTextIndentZero) {
-      block = block.replace(/(text-align\s*:\s*center)(\s*;|\s*$)/g, '$1 !important$2');
       block = block.replace(
         /(text-indent\s*:\s*0(?:\.0+)?(?:px|em|rem|%)?)(\s*;|\s*$)/g,
         '$1 !important$2',
@@ -1702,6 +1747,16 @@ export const applyImageStyle = (document: Document) => {
   });
 };
 
+// The enlarged link hit area positions every link and its ::before box, and
+// paginated layout slows down with each positioned box: a Strong's dictionary
+// section went from 1.3s to 10s to lay out, and a 20 MB concordance with 273k
+// links never finished. Opt a document in only when it has few enough links.
+export const applyLinkHitArea = (document: Document) => {
+  if (document.links.length <= MAX_ENLARGED_LINKS) {
+    document.documentElement.classList.add(LINK_HIT_AREA_CLASS);
+  }
+};
+
 export const keepTextAlignment = (document: Document) => {
   // Why two-phase: the previous version read getComputedStyle and wrote
   // classList.add inside the same forEach pass. classList.add invalidates
@@ -1717,7 +1772,9 @@ export const keepTextAlignment = (document: Document) => {
   // Two-phase read-then-write keeps the loop O(N) elements + 1 recalc
   // instead of O(N) recalcs.
   const win = document.defaultView ?? window;
-  const els = document.querySelectorAll('div, p, blockquote, dd');
+  // A chunk of a huge section (foliate-js section-chunks.js) holds a hidden
+  // placeholder for every element outside it; never read those.
+  const els = document.querySelectorAll(':is(div, p, blockquote, dd):not([data-foliate-chunk])');
   const alignClasses = new Array<string | null>(els.length);
   // Read pass: collect computed text-align for every element. The browser
   // computes style once for the whole document on the first call, then
