@@ -410,7 +410,8 @@ export interface ReadestCloudSettings {
  * User-facing sync categories. 'progress' gates the existing book-config
  * (reading progress) sync, 'note' gates annotations, 'book' gates book
  * binaries + metadata, 'dictionary' gates the imported-dictionary replica
- * sync. 'credentials' is a meta-toggle that gates the encrypted-credential
+ * sync. 'book_data' gates a book's synced data files (downloaded read-aloud
+ * audio, later translations). 'credentials' is a meta-toggle that gates the encrypted-credential
  * fields (OPDS username/password, KOSync credentials, Readwise / Hardcover
  * tokens) across whichever replica kinds carry them. Adding a new replica
  * kind extends this union.
@@ -419,6 +420,7 @@ export type SyncCategory =
   | 'book'
   | 'progress'
   | 'note'
+  | 'book_data'
   | 'dictionary'
   | 'font'
   | 'texture'
@@ -434,6 +436,7 @@ export const SYNC_CATEGORIES: readonly SyncCategory[] = [
   'book',
   'progress',
   'note',
+  'book_data',
   'dictionary',
   'font',
   'texture',
