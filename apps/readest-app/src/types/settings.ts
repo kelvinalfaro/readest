@@ -108,6 +108,12 @@ export interface KOSyncSettings {
    * Off by default, matching KOReader.
    */
   sendMetadata?: boolean;
+  /**
+   * Accept a self-signed or mismatched TLS certificate from this server on
+   * native requests. Unset on settings saved before the option existed, which
+   * keep accepting them; see `allowsSelfSignedCert`.
+   */
+  allowSelfSignedCert?: boolean;
 }
 
 export type CWAFormatPreference = 'epub' | 'kepub' | 'pdf';
@@ -168,6 +174,12 @@ export interface BookOrbitSettings {
    * option existed keep the automatic pushes they already had.
    */
   autoSync?: boolean;
+  /**
+   * Accept a self-signed or mismatched TLS certificate from this server on
+   * native requests. Unset on settings saved before the option existed, which
+   * keep accepting them; see `allowsSelfSignedCert`.
+   */
+  allowSelfSignedCert?: boolean;
 }
 
 export interface ReadwiseSettings {
@@ -225,6 +237,10 @@ export interface NotionSettings {
   lastSyncedAt: number;
   /** Append a chapter heading block before each highlight (default ON). */
   includeChapterHeading?: boolean;
+  /** Render each note through `customTemplate` instead of the built-in layout. */
+  useCustomTemplate?: boolean;
+  /** Nunjucks template rendering one note as Markdown, converted to Notion blocks. */
+  customTemplate?: string;
 }
 
 /**

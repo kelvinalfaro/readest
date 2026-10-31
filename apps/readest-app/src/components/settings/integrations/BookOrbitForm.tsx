@@ -34,6 +34,8 @@ import {
   SettingsSwitchRow,
   Tips,
 } from '../primitives';
+import { allowsSelfSignedCert } from '@/utils/tls';
+import SelfSignedCertSwitch from './SelfSignedCertSwitch';
 
 interface BookOrbitFormProps {
   onBack: () => void;
@@ -66,6 +68,10 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
     Awaited<ReturnType<typeof discoverBookOrbitSmartScopes>>
   >([]);
   const [selectedScopeUrl, setSelectedScopeUrl] = useState('');
+  // A connection accepts self-signed certificates unless the user turns it off.
+  const [allowSelfSignedCert, setAllowSelfSignedCert] = useState(
+    allowsSelfSignedCert(settings.bookorbit),
+  );
 
   useEffect(() => {
     const formatOsName = (name: string): string => {
@@ -158,6 +164,7 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
       password,
       deviceName,
       customHeaders: hasCustomHeaders(parsedHeaders.headers) ? parsedHeaders.headers : undefined,
+      allowSelfSignedCert,
       enabled: true,
     };
     const client = new BookOrbitClient(config);
@@ -199,6 +206,16 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
 
   const handleToggleField = (field: BookOrbitToggleField) => async () => {
     const bookorbit = { ...settings.bookorbit, [field]: !settings.bookorbit[field] };
+    const newSettings = { ...settings, bookorbit };
+    setSettings(newSettings);
+    await saveSettings(envConfig, newSettings);
+  };
+
+  const handleToggleSelfSignedCert = async () => {
+    const bookorbit = {
+      ...settings.bookorbit,
+      allowSelfSignedCert: !allowsSelfSignedCert(settings.bookorbit),
+    };
     const newSettings = { ...settings, bookorbit };
     setSettings(newSettings);
     await saveSettings(envConfig, newSettings);
@@ -404,6 +421,11 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
               />
             </SettingsRow>
           </BoxedList>
+
+          <SelfSignedCertSwitch
+            checked={allowsSelfSignedCert(settings.bookorbit)}
+            onChange={handleToggleSelfSignedCert}
+          />
 
           <div className='space-y-1.5'>
             <SectionTitle as='label' htmlFor='bookorbit-custom-headers' className='block'>
@@ -631,6 +653,11 @@ const BookOrbitForm: React.FC<BookOrbitFormProps> = ({ onBack }) => {
                 onChange={(e) => setUrl(e.target.value)}
               />
             </div>
+
+            <SelfSignedCertSwitch
+              checked={allowSelfSignedCert}
+              onChange={() => setAllowSelfSignedCert(!allowSelfSignedCert)}
+            />
 
             <div className='space-y-1.5'>
               <SectionTitle as='label' htmlFor='bookorbit-username' className='block'>

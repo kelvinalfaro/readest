@@ -382,11 +382,11 @@ export function BookshelvesEditor({
   const selectedGroupBy = resolveBookshelfGroupBy(selected, globalGroupBy);
   const useGlobalSort = selected.useGlobalSort !== false;
   const selectedSort = resolveBookshelfSort(selected, globalSort);
-  const fields = useMemo(() => discoverBookshelfFields(library), [library]);
   const books = useMemo(
     () => library.filter((b) => !b.deletedAt && !isAbsBookOrphaned(b)),
     [library, servers, settings],
   );
+  const fields = useMemo(() => discoverBookshelfFields(books), [books]);
   const previewDefinitions = useMemo(
     () =>
       debounced.map((s) => ({
@@ -522,6 +522,7 @@ export function BookshelvesEditor({
           mode={mode}
           coverFit={shelf.coverFit || 'crop'}
           skeuomorphicCovers={shelf.skeuomorphicCovers}
+          showPageCount={shelf.showPageCount}
           isSelectMode={false}
           itemSelected={false}
           transferProgress={null}
@@ -709,6 +710,14 @@ export function BookshelvesEditor({
                 label={_('Skeuomorphic covers')}
                 checked={!!selected.skeuomorphicCovers}
                 onChange={() => update({ skeuomorphicCovers: !selected.skeuomorphicCovers })}
+              />
+              <SettingsSwitchRow
+                label={_('Show page count')}
+                checked={!!selected.showPageCount}
+                // Off clears the key: older app versions reject a definition carrying it.
+                onChange={() =>
+                  update({ showPageCount: selected.showPageCount ? undefined : true })
+                }
               />
             </BoxedList>
             <BookshelfFilterEditor

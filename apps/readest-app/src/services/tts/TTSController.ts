@@ -43,6 +43,7 @@ import {
   TTSWordOffset,
 } from './wordHighlight';
 import {
+  audioType,
   findNarratedSection,
   hasMediaOverlays,
   loadMediaOverlaySection,
@@ -89,6 +90,12 @@ const PRELOAD_AHEAD_SEC = 180;
 const PRELOAD_MAX_PARAGRAPHS = 40;
 // Preload the next paragraphs this long after a paragraph starts at the latest.
 const PRELOAD_NEXT_AFTER_MS = 500;
+
+const isSameRange = (a: Range, b: Range) =>
+  a.startContainer.ownerDocument === b.startContainer.ownerDocument &&
+  a.compareBoundaryPoints(Range.START_TO_START, b) === 0 &&
+  a.compareBoundaryPoints(Range.END_TO_END, b) === 0;
+
 // An engine that does not answer in time (a server that never replies, a
 // voice list that never loads) is unavailable for this session: one stuck
 // engine must not hold up the others, the player sheet, or the next start.
@@ -234,6 +241,9 @@ export class TTSController extends EventTarget {
   #speakWordOffsets: (TTSWordOffset | null)[] = [];
   #speakWordRanges: (Range | null | undefined)[] = [];
   #suppressMarkHighlight = false;
+  // The mark dispatchSpeakMark last set on the live TTS, so a look-ahead that
+  // steps the TTS can put the sentence being read back (#6850).
+  #lastSetMark: { name: string; range: Range } | null = null;
   // True while the current chunk is highlighted word-by-word, with the most
   // recently highlighted word range. Lets re-highlights (e.g. on page relocate)
   // re-apply the word instead of redrawing the whole sentence over it.
@@ -325,7 +335,7 @@ export class TTSController extends EventTarget {
     if (appService?.isAndroidApp || appService?.isIOSApp) {
       this.ttsNativeClient = new NativeTTSClient(this);
     }
-    this.ttsMediaOverlayClient = new MediaOverlayClient(this);
+    this.ttsMediaOverlayClient = new MediaOverlayClient(this, appService);
     this.ttsClient = this.ttsWebClient;
     this.appService = appService;
     this.view = view;
@@ -658,7 +668,9 @@ export class TTSController extends EventTarget {
         resolveUrl: async (href) => {
           const appService = this.appService!;
           if (appService.appPlatform !== 'tauri' || appService.isMobileApp) return null;
-          return convertFileSrc(await appService.resolveFilePath(href, 'Books'));
+          const path = await appService.resolveFilePath(href, 'Books');
+          const { getLocalMediaUrl } = await import('@/services/audiobook/mediaProxy');
+          return (await getLocalMediaUrl(path, audioType(href))) ?? convertFileSrc(path);
         },
         resolvePath: async (href) => await this.appService!.resolveFilePath(href, 'Books'),
       });
@@ -1605,13 +1617,30 @@ export class TTSController extends EventTarget {
     }
   }
 
-  async #handleNavigationWithoutSSML(initSection: () => Promise<boolean>, isPlaying: boolean) {
+  // Stepping back into a section starts at its end: its last paragraph, or by
+  // mark its last sentence, rather than its opening (#7065). A closing block
+  // with nothing to speak (a "***" divider) is passed over, or playback would
+  // move straight on to the section it came from. Paused, the landing spot is
+  // shown the way a step back within a section shows it.
+  #fromEnd(byMark: boolean, paused: boolean): string | undefined {
+    const tts = this.#getTts();
+    let last: string | undefined;
+    for (let ssml = tts?.next(); ssml; ssml = tts?.next()) last = ssml;
+    while (last && !parseSSMLMarks(last).marks.length) last = tts?.prev();
+    const mark = byMark && last ? parseSSMLMarks(last).marks.at(-1) : undefined;
+    const ssml = mark && tts?.setMark(mark.name) ? tts.resume() : last;
+    if (paused && ssml) this.dispatchSpeakMark(parseSSMLMarks(ssml).marks[0]);
+    return ssml;
+  }
+
+  async #handleNavigationWithoutSSML(
+    initSection: () => Promise<boolean>,
+    isPlaying: boolean,
+    read = () => this.#getTts()?.start(),
+  ) {
     if (await initSection()) {
-      if (isPlaying) {
-        this.#speak(this.#getTts()?.start());
-      } else {
-        this.#getTts()?.start();
-      }
+      const ssml = read();
+      if (isPlaying) this.#speak(ssml);
     } else {
       // No adjacent section in this direction: the session has run out of
       // content (end of book on forward, start of book on backward).
@@ -1647,6 +1676,7 @@ export class TTSController extends EventTarget {
       estimateSentenceSeconds(ssml.replace(/<[^>]*>/g, ' '), this.ttsLang || 'en', voiceId);
     const rawSsmls: string[] = [];
     let sectionEnded = false;
+    const reading = tts.getLastRange();
     for (let i = 0; i < maxCount; i++) {
       const ssml = tts.next();
       if (!ssml) {
@@ -1660,6 +1690,15 @@ export class TTSController extends EventTarget {
     }
     for (let i = 0; i < rawSsmls.length; i++) {
       tts.prev();
+    }
+    // next() and prev() forget the sentence being read, even when there is no
+    // next block. Put it back, or "next sentence" starts from no sentence and
+    // skips the rest of the block: in a chapter that is one block, the chapter.
+    const last = this.#lastSetMark;
+    if (reading && last && isSameRange(last.range, reading)) {
+      this.#suppressMarkHighlight = true;
+      tts.setMark(last.name);
+      this.#suppressMarkHighlight = false;
     }
 
     // The document read ends inside the budget: carry on into what follows, so
@@ -2174,7 +2213,11 @@ export class TTSController extends EventTarget {
         : undefined
       : tts?.prev(!isPlaying);
     if (!ssml) {
-      await this.#handleNavigationWithoutSSML(() => this.#initTTSForPrevSection(), isPlaying);
+      await this.#handleNavigationWithoutSSML(
+        () => this.#initTTSForPrevSection(),
+        isPlaying,
+        () => this.#fromEnd(byMark, !isPlaying),
+      );
     } else {
       await this.#handleNavigationWithSSML(ssml, isPlaying);
     }
@@ -2440,6 +2483,7 @@ export class TTSController extends EventTarget {
         this.#suppressMarkHighlight = wordMode;
         const range = this.#getTts()?.setMark(mark.name);
         this.#suppressMarkHighlight = false;
+        if (range) this.#lastSetMark = { name: mark.name, range };
         this.#speakWordsArmed = !!range;
         if (wordMode && range) {
           // The previous sentence's last word is no longer sounding.

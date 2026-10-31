@@ -370,6 +370,25 @@ describe('bookshelf editor', () => {
       unit: undefined,
     });
   });
+  it('suggests filter values only from books still in the library', () => {
+    const [first] = useLibraryStore.getState().library;
+    act(() =>
+      useLibraryStore.setState({
+        library: [
+          { ...first!, hash: 'live', author: 'Live Author' },
+          { ...first!, hash: 'gone', author: 'Removed Author', deletedAt: 1 },
+        ],
+      }),
+    );
+    render(<BookshelvesEditor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Add bookshelf' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add condition' }));
+    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'author' } });
+    const suggested = Array.from(document.querySelectorAll('datalist option'), (o) =>
+      o.getAttribute('value'),
+    );
+    expect(suggested).toEqual(['Live Author']);
+  });
   it('inherits grouping and retains each shelf’s independent choice', async () => {
     render(<BookshelvesEditor />);
     const grouping = screen.getByRole('group', { name: 'Grouping' });
@@ -766,6 +785,33 @@ describe('bookshelf editor', () => {
     const draft = save.mock.calls.at(-1)![2] as BookshelfDefinition[];
     expect(draft.find((s) => s.name === 'New bookshelf 1')?.hideCovers).toBe(true);
     expect(draft.find((s) => s.id === 'default')?.hideCovers).toBe(false);
+  });
+  it('saves the page count badge for the selected shelf independently (#6909)', async () => {
+    render(<BookshelvesEditor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    fireEvent.click(screen.getByLabelText('Show page count'));
+    await waitFor(() =>
+      expect(
+        save.mock.calls.at(-1)?.[2].find((s: BookshelfDefinition) => s.id === 'default'),
+      ).toMatchObject({
+        showPageCount: true,
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /^Recently read/ }));
+    expect((screen.getByLabelText('Show page count') as HTMLInputElement).checked).toBe(false);
+  });
+  it('drops the page count key when the switch is turned off, so older clients still parse the shelf (#6909)', async () => {
+    render(<BookshelvesEditor />);
+    fireEvent.click(screen.getByRole('button', { name: 'Default' }));
+    fireEvent.click(screen.getByLabelText('Show page count'));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    fireEvent.click(screen.getByLabelText('Show page count'));
+    await waitFor(() => {
+      const saved = save.mock.calls
+        .at(-1)?.[2]
+        .find((s: BookshelfDefinition) => s.id === 'default');
+      expect(JSON.parse(JSON.stringify(saved))).not.toHaveProperty('showPageCount');
+    });
   });
   it('uses the library language for preview sorting', async () => {
     localStorage.setItem('i18nextLng', 'sv');

@@ -19,7 +19,12 @@ import { isDialogueHighlightActive } from './dialogueHighlight';
 import { readStoredAmbientIsDarkMode } from './ambientLight';
 import { INLINE_FORMATTING_SELECTOR } from './inlineTags';
 import { getOSPlatform } from './misc';
-import { SCROLL_WRAPPER_CLASS, SCROLL_WRAPPER_FIT_CLASS } from './scrollable';
+import {
+  LINK_HIT_AREA_CLASS,
+  LINK_HIT_AREA_PX,
+  SCROLL_WRAPPER_CLASS,
+  SCROLL_WRAPPER_FIT_CLASS,
+} from './scrollable';
 
 /**
  * Build the resolved CSS font-family lists (serif / sans-serif / monospace)
@@ -372,6 +377,9 @@ const getColorStyles = (
     }
     a:any-link {
       ${overrideColor ? `color: ${primary} !important;` : isDarkMode ? `color: lightblue;` : ''}
+    }
+    /* left off hovered links, so a book's own a:hover style applies (#6859) */
+    a:any-link:where(:not(:hover)) {
       text-decoration: ${isEink ? 'underline' : 'none'};
     }
     body.pbg {
@@ -470,7 +478,7 @@ const getColorStyles = (
 
 export const LINK_TOUCH_HOLD_CLASS = 'link-touch-hold';
 export const TEXT_SELECTED_CLASS = 'text-selected';
-export const LINK_HIT_AREA_CLASS = 'link-hit-area';
+export { LINK_HIT_AREA_CLASS };
 export const MAX_ENLARGED_LINKS = 1000;
 
 const getPageLayoutStyles = (
@@ -528,7 +536,7 @@ const getPageLayoutStyles = (
   html.${LINK_HIT_AREA_CLASS} a::before {
     content: '';
     position: absolute;
-    inset: -10px;
+    inset: -${LINK_HIT_AREA_PX}px;
   }
   /* the enlarged area swallows the text around a link, so a selection dragged
      next to a footnote marker snaps away (#6566); set while text is selected */
@@ -601,6 +609,22 @@ const getPageLayoutStyles = (
 
   body.paginated-mode td:has(img), body.paginated-mode td :has(img) {
     max-height: calc(var(--available-height) * 0.8 * 1px);
+  }
+
+  body.paginated-mode img {
+    max-width: 100%;
+    max-height: calc(var(--available-height) * 1px);
+    object-fit: contain;
+  }
+
+  body.paginated-mode svg {
+    max-width: 100%;
+    max-height: calc(var(--available-height) * 1px);
+  }
+
+  body.scroll-mode img {
+    max-width: 100%;
+    object-fit: contain;
   }
 
   figure.code {
@@ -753,14 +777,11 @@ const getParagraphLayoutStyles = (
   dd.aligned-justify, div.aligned-justify {
     ${!justify && overrideLayout ? 'text-align: initial !important;' : ''};
   }
-  /* An image that is the paragraph's whole content must not take the indent:
-     sized to the column, it would overhang by the indent and paint a strip on
-     the next page (#6198). Linked images (<a><img>, <span><a><img>) included. */
-  p:has(> img:only-child), p:has(> span:only-child > img:only-child),
-  p:has(> a:only-child > img:only-child),
-  p:has(> span:only-child > a:only-child > img:only-child),
-  p:has(> img:not(.has-text-siblings)),
-  p:has(> a:first-child + img:last-child) {
+  /* An image that starts a paragraph must not take the indent: sized to the
+     column, it would overhang by the indent and paint a strip on the next page
+     (#6198). applyImageStyle marks such paragraphs; selectors can't see text,
+     so :only-child also matched a footnote icon inside text. */
+  p.leading-image {
     text-indent: initial !important;
   }
   blockquote[align="center"], div[align="center"],
@@ -1252,12 +1273,18 @@ export const transformStylesheet = (
     return match;
   });
 
-  // clip nowrapped elements
+  // Clip nowrapped elements along the line, so a long line can't spill past
+  // the column. The other axis stays visible: clipping it cut off whatever
+  // rises above the line box, like a top-aligned footnote icon (#6797). A rule
+  // that sizes its own box keeps the clip on both axes.
+  const lineClip = vertical ? 'overflow-y: clip !important;' : 'overflow-x: clip !important;';
   css = css.replace(ruleRegex, (match, selector, block) => {
     const hasWhiteSpaceNowrap = /white-space\s*:\s*nowrap\s*[;$]/.test(block);
     if (hasWhiteSpaceNowrap) {
       if (!/overflow\s*:/.test(block)) {
-        block = block.replace(/}$/, ' overflow: clip !important; }');
+        const sizesBox = /(?:^|[;{\s])(?:max-)?height\s*:|line-clamp\s*:/.test(block);
+        const clip = sizesBox ? 'overflow: clip !important;' : lineClip;
+        block = block.replace(/}$/, ` ${clip} }`);
       }
       return selector + block;
     }
@@ -1546,8 +1573,11 @@ export const transformStylesheet = (
     })
     .replace(/([\s;])font-weight\s*:\s*normal/gi, '$1font-weight: var(--font-weight)')
     .replace(/([\s;])color\s*:\s*black/gi, '$1color: var(--theme-fg-color)')
-    .replace(/([\s;])color\s*:\s*#000000/gi, '$1color: var(--theme-fg-color)')
-    .replace(/([\s;])color\s*:\s*#000/gi, '$1color: var(--theme-fg-color)')
+    // the whole hex value, or `#000` would also match the start of `#0000FF` (#6858)
+    .replace(
+      /([\s;])color\s*:\s*#(?:000f?|000000(?:ff)?)(?![0-9a-f])/gi,
+      '$1color: var(--theme-fg-color)',
+    )
     .replace(/([\s;])color\s*:\s*rgb\(0,\s*0,\s*0\)/gi, '$1color: var(--theme-fg-color)');
 
   const { isDarkMode, bg } = getThemeCode();
@@ -1683,6 +1713,14 @@ export const applyImageStyle = (document: Document) => {
         ? parseFloat(heightAttr)
         : NaN;
     const noEnlarge = img.getAttribute('zy-enlarge-src') === 'none';
+    const paragraph = img.closest('p');
+    let leadingImageParagraph: HTMLParagraphElement | null = null;
+    if (paragraph) {
+      const before = document.createRange();
+      before.setStart(paragraph, 0);
+      before.setEndBefore(img);
+      if (!before.toString().trim()) leadingImageParagraph = paragraph;
+    }
 
     let inlineWithText = false;
     let keepBaseline = false;
@@ -1695,7 +1733,13 @@ export const applyImageStyle = (document: Document) => {
       const isInline = childNodes.every(
         (node) => node.nodeType !== Node.ELEMENT_NODE || (node as Element).tagName !== 'BR',
       );
-      inlineWithText = hasTextSiblings && isInline;
+      // A glyph image standing in for a character is never sized as a share
+      // of the line; a title image the book sizes that way keeps it (#7039).
+      // computedStyleMap keeps the percentage that getComputedStyle resolves,
+      // also inside a calc() (serialized as e.g. `calc(30% - 1px)`).
+      const width = img.computedStyleMap?.().get('width');
+      const percentSized = !!width && width.toString().includes('%');
+      inlineWithText = hasTextSiblings && isInline && !percentSized;
       if (inlineWithText) {
         // Only supply Readest's baseline default when the book leaves
         // vertical-align at its initial value; an author-set value (e.g. a CJK
@@ -1712,8 +1756,26 @@ export const applyImageStyle = (document: Document) => {
       inlineWithText,
       keepBaseline,
       noEnlarge,
+      leadingImageParagraph,
     };
   });
+
+  const rootStyle = document.documentElement?.style;
+  const availableHeight = rootStyle
+    ? parseFloat(rootStyle.getPropertyValue('--available-height'))
+    : NaN;
+  const baseHeight =
+    !isNaN(availableHeight) && availableHeight > 0
+      ? availableHeight
+      : (win?.innerHeight ?? window.innerHeight);
+
+  const availableWidth = rootStyle
+    ? parseFloat(rootStyle.getPropertyValue('--available-width'))
+    : NaN;
+  const baseWidth =
+    !isNaN(availableWidth) && availableWidth > 0
+      ? availableWidth
+      : (win?.innerWidth ?? window.innerWidth);
 
   for (const {
     img,
@@ -1722,14 +1784,19 @@ export const applyImageStyle = (document: Document) => {
     inlineWithText,
     keepBaseline,
     noEnlarge,
+    leadingImageParagraph,
   } of plans) {
+    leadingImageParagraph?.classList.add('leading-image');
     if (!isNaN(percentWidth)) {
-      img.style.width = `${(percentWidth / 100) * window.innerWidth}px`;
+      img.style.width = `${(percentWidth / 100) * baseWidth}px`;
       img.removeAttribute('width');
     }
     if (!isNaN(percentHeight)) {
-      img.style.height = `${(percentHeight / 100) * window.innerHeight}px`;
+      img.style.height = `${(percentHeight / 100) * baseHeight}px`;
       img.removeAttribute('height');
+    }
+    if (!isNaN(percentWidth) && !isNaN(percentHeight)) {
+      img.style.objectFit = 'contain';
     }
     if (inlineWithText) {
       img.classList.add('has-text-siblings');
