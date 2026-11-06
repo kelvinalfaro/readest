@@ -53,6 +53,8 @@ export class KOSyncClient {
   private config: KOSyncSettings;
   private isLanServer: boolean = false;
   private usesHttpAuth: boolean = false;
+  /** Why the last progress read or write failed, or null when it didn't. */
+  lastError: string | null = null;
 
   constructor(config: KOSyncSettings) {
     this.config = config;
@@ -152,6 +154,21 @@ export class KOSyncClient {
     return response;
   }
 
+  /** Read-only login check. Unlike {@link connect}, it never registers an account. */
+  async checkConnection(): Promise<{ success: boolean; message?: string }> {
+    try {
+      const response = await this.request('/users/auth');
+      if (response.status === 401) return { success: false, message: 'Invalid credentials.' };
+      if (!response.ok) return { success: false, message: `HTTP ${response.status}` };
+      if (!(await this.isKoSyncJsonResponse(response))) {
+        return { success: false, message: 'Not a KOReader Sync server. Check the Server URL.' };
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, message: (e as Error).message || 'Connection error.' };
+    }
+  }
+
   /**
    * Connects to the KOSync server with authentication
    * @param username - The username for authentication
@@ -239,6 +256,7 @@ export class KOSyncClient {
    * @returns Promise with the progress data or null if not found
    */
   async getProgress(book: Book): Promise<KoSyncProgress | null> {
+    this.lastError = null;
     if (!this.config.userkey) return null;
 
     const documentHash = this.getDocumentDigest(book);
@@ -251,6 +269,8 @@ export class KOSyncClient {
         console.error(
           `KOSync: Failed to get progress for ${book.title}. Status: ${response.status}`,
         );
+        // 404 is a book the server has no position for, not a failed sync.
+        if (response.status !== 404) this.lastError = `HTTP ${response.status}`;
         return null;
       }
 
@@ -268,6 +288,7 @@ export class KOSyncClient {
       return { ...data, document: data.document || documentHash };
     } catch (e) {
       console.error('KOSync getProgress failed', e);
+      this.lastError = (e as Error).message || 'Connection error.';
       return null;
     }
   }
@@ -280,6 +301,7 @@ export class KOSyncClient {
    * @returns Promise with boolean indicating success
    */
   async updateProgress(book: Book, progress: string, percentage: number): Promise<boolean> {
+    this.lastError = null;
     if (!this.config.userkey) return false;
 
     const documentHash = this.getDocumentDigest(book);
@@ -320,11 +342,13 @@ export class KOSyncClient {
         console.error(
           `KOSync: Failed to update progress for ${book.title}. Status: ${response.status}`,
         );
+        this.lastError = `HTTP ${response.status}`;
         return false;
       }
       return true;
     } catch (e) {
       console.error('KOSync updateProgress failed', e);
+      this.lastError = (e as Error).message || 'Connection error.';
       return false;
     }
   }
@@ -342,7 +366,7 @@ export class KOSyncClient {
 
   getDocumentDigest(book: Book): string {
     if (this.config.checksumMethod === 'filename') {
-      console.warn('This is not possible anymore, using md5 instead.');
+      return md5(book.originalFilename || `${book.title}.${book.format.toLowerCase()}`);
     }
     return book.metadata?.absFileHash ?? book.hash;
   }

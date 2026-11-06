@@ -278,6 +278,7 @@ export abstract class BaseAppService implements AppService {
     return {
       fs: this.fs,
       isMobile: this.isMobile,
+      isDesktopApp: this.isDesktopApp,
       isEink: this.isEink,
       isAppDataSandbox: this.isAppDataSandbox,
     };

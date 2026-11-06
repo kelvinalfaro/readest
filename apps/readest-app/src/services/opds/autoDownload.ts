@@ -7,6 +7,7 @@ import { needsProxy, getProxiedURL, probeAuth, probeFilename } from '@/app/opds/
 import { resolveURL, parseMediaType, getFileExtFromPath } from '@/app/opds/utils/opdsUtils';
 import { normalizeCustomHeaders } from '@/utils/customHeaders';
 import { allowsSelfSignedCertAt } from '@/utils/tls';
+import { recordFlow } from '@/services/sync/dataFlow/log';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
 import { applyOPDSCover } from './cover';
 import { applyOPDSMetadata } from './metadata';
@@ -36,6 +37,12 @@ import { runWithConcurrency } from '@/utils/concurrency';
 import { uniqueId } from '@/utils/misc';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const BOOK_PULL = { connector: 'opds', direction: 'pull', kind: 'books' } as const;
+
+interface FlowFailure {
+  bookTitle?: string;
+  error: string;
+}
 
 /**
  * Download a single item and import it into the library.
@@ -45,7 +52,7 @@ async function downloadAndImport(
   catalog: OPDSCatalog,
   appService: AppService,
   books: Book[],
-): Promise<Book> {
+): Promise<{ book: Book; downloaded: boolean }> {
   const url = resolveURL(item.acquisitionHref, item.baseURL);
   // CWA/Calibre can repackage the same title and change its bytes (and hash)
   // without changing the OPDS source. Reuse the existing live book so a later
@@ -59,7 +66,7 @@ async function downloadAndImport(
     });
     if (existing) {
       console.log(`[OPDS] "${item.title}" already imported for this source — skipping re-download`);
-      return existing;
+      return { book: existing, downloaded: false };
     }
   }
   const username = catalog.username ?? '';
@@ -163,7 +170,7 @@ async function downloadAndImport(
     console.error('OPDS sync: failed to update source map:', error);
   }
   console.log(`[OPDS] imported "${item.title}"`);
-  return book;
+  return { book, downloaded: true };
 }
 
 /**
@@ -180,7 +187,12 @@ async function syncCatalog(
   appService: AppService,
   books: Book[],
   options: OPDSSyncOptions = {},
-): Promise<{ newBooks: Book[]; state: OPDSSubscriptionState; error?: unknown }> {
+): Promise<{
+  newBooks: Book[];
+  state: OPDSSubscriptionState;
+  failedDownloads: FlowFailure[];
+  error?: unknown;
+}> {
   const state = await loadSubscriptionState(appService, catalog.id);
   const stats: OPDSCatalogSyncStats = {
     catalogId: catalog.id,
@@ -276,14 +288,14 @@ async function syncCatalog(
       await saveSubscriptionState(appService, state);
     }
     await options.onCatalogComplete?.(stats);
-    return { newBooks: [], state };
+    return { newBooks: [], state, failedDownloads: [] };
   }
 
   if (options.dryRun) {
     stats.failed = state.failedEntries.length;
     stats.nextRetryAt = getNextRetryAt(state.failedEntries);
     await options.onCatalogComplete?.(stats);
-    return { newBooks: [], state };
+    return { newBooks: [], state, failedDownloads: [] };
   }
 
   // Acquisition: download with bounded concurrency, persisting progress after
@@ -293,6 +305,7 @@ async function syncCatalog(
   stats.attempted = allItems.length;
   let completedDownloads = 0;
   const newBooks: Book[] = [];
+  const failedDownloads: FlowFailure[] = [];
   const updatedFailedEntries: FailedEntry[] = [
     // Keep non-retry-eligible failures as-is
     ...state.failedEntries.filter((fe) => !isRetryEligible(fe)),
@@ -322,7 +335,7 @@ async function syncCatalog(
       for (const outcome of downloadResults) {
         const item = outcome.item;
         if ('result' in outcome) {
-          const book = outcome.result;
+          const book = outcome.result.book;
           batchBooks.push(book);
           newKnownIds.push(item.entryId);
           stats.downloaded += 1;
@@ -372,6 +385,21 @@ async function syncCatalog(
         await options.onBooksImported?.(batchBooks);
         newBooks.push(...batchBooks);
       }
+      for (const outcome of downloadResults) {
+        if ('result' in outcome) {
+          recordFlow({
+            ...BOOK_PULL,
+            bookTitle: outcome.item.title,
+            count: outcome.result.downloaded ? 1 : 0,
+          });
+        } else {
+          const { error } = outcome;
+          failedDownloads.push({
+            bookTitle: outcome.item.title,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       state.knownEntryIds = pruneKnownEntryIds([...state.knownEntryIds, ...newKnownIds]);
       state.failedEntries = updatedFailedEntries;
@@ -379,13 +407,13 @@ async function syncCatalog(
       await saveSubscriptionState(appService, state);
     }
   } catch (error) {
-    return { newBooks, state, error };
+    return { newBooks, state, failedDownloads, error };
   }
 
   stats.failed = updatedFailedEntries.length;
   stats.nextRetryAt = getNextRetryAt(updatedFailedEntries);
   await options.onCatalogComplete?.(stats);
-  return { newBooks, state };
+  return { newBooks, state, failedDownloads };
 }
 
 /**
@@ -414,10 +442,19 @@ export async function syncSubscribedCatalogs(
 
   const allNewBooks: Book[] = [];
   const errors: SyncResult['errors'] = [];
+  const failures: FlowFailure[] = [];
+  let retriesPending = false;
 
   for (const catalog of eligible) {
     try {
-      const { newBooks, error } = await syncCatalog(catalog, appService, books, options);
+      const { newBooks, state, failedDownloads, error } = await syncCatalog(
+        catalog,
+        appService,
+        books,
+        options,
+      );
+      failures.push(...failedDownloads);
+      retriesPending ||= state.failedEntries.length > 0;
       // Take the books committed before the failure, then let the existing
       // error path run — those batches are already on disk and marked known.
       allNewBooks.push(...newBooks);
@@ -441,6 +478,7 @@ export async function syncSubscribedCatalogs(
         failed: 0,
         error: reason instanceof Error ? reason.message : String(reason),
       });
+      failures.push({ error: reason instanceof Error ? reason.message : String(reason) });
       try {
         const state = await loadSubscriptionState(appService, catalog.id);
         state.lastCheckedAt = Date.now();
@@ -450,6 +488,10 @@ export async function syncSubscribedCatalogs(
       }
     }
   }
+  // Last, so one catalog's success doesn't hide another's failure. A clean pass
+  // with nothing new still counts, or an old failure would never clear.
+  for (const failure of failures) recordFlow({ ...BOOK_PULL, ...failure });
+  if (failures.length === 0 && !retriesPending) recordFlow({ ...BOOK_PULL, count: 0 });
 
   return {
     newBooks: allNewBooks,

@@ -27,6 +27,8 @@ const DOWNLOADS_MARKER = 'downloads.json';
 
 // The sync round in flight per book, shared by every store of that book.
 const syncRounds = new Map<string, Promise<void>>();
+// A saved pack record stays pending until its cloud publication succeeds.
+const pendingPackPublications = new Set<string>();
 // What a book's rounds share between opens: the destinations, so a folder is
 // prepared once, and their listings, so a push round lists nothing new. An
 // open starts a new session; a download's push rounds (one per finished
@@ -377,10 +379,16 @@ export class BookTTSCacheStore implements TTSCacheStore {
         { getBookDataDestinations },
         { pullBookData, pushBookData },
         { createTTSBookDataKind },
+        { useBookDataStore },
+        { useLibraryStore },
+        { useSettingsStore },
       ] = await Promise.all([
         import('@/services/sync/bookData/destinationsFor'),
         import('@/services/sync/bookData/engine'),
         import('@/services/sync/bookData/ttsKind'),
+        import('@/store/bookDataStore'),
+        import('@/store/libraryStore'),
+        import('@/store/settingsStore'),
       ]);
       const current = await getBookDataDestinations(this.#appService, bookHash);
       let session = syncSessions.get(bookHash);
@@ -395,13 +403,98 @@ export class BookTTSCacheStore implements TTSCacheStore {
       });
       if (!destinations.length) return;
       const kind = createTTSBookDataKind(store);
-      if (direction === 'both') await pullBookData(kind, bookHash, destinations, listings);
+      // What each destination holds, synced in the book's config: an open
+      // pulls only when it names a pack this device lacks, or a destination it
+      // has never recorded. A book without audio then makes no request. The
+      // push never trusts it: it only grows by merging, so it still names
+      // packs purged with the book from a destination; a device with audio
+      // lists before pushing, which also corrects the record.
+      const books = useBookDataStore.getState();
+      const recorded = books.getConfig(bookHash)?.ttsPacks;
+      const needsPull = async () => {
+        if (destinations.some((dest) => !recorded?.[dest.id])) return true;
+        for (const dest of destinations) {
+          for (const unit of recorded![dest.id]!) {
+            if (!(await kind.hasLocal(unit))) return true;
+          }
+        }
+        return false;
+      };
+      if (direction === 'both' && (await needsPull())) {
+        await pullBookData(kind, bookHash, destinations, listings);
+      }
       await pushBookData(kind, bookHash, destinations, listings);
+
+      // Record what each listed destination holds; one that declined the
+      // book holds nothing. Start from the config as it is now: the reader's
+      // pull may have merged a peer's record while this round awaited.
+      const latest = books.getConfig(bookHash);
+      if (!latest) return;
+      const next = { ...latest.ttsPacks };
+      for (const dest of destinations) {
+        if (!listings.has(dest.id)) continue;
+        const files = listings.get(dest.id) ?? new Set<string>();
+        const units = new Set<string>();
+        for (const file of files) {
+          const unit = kind.unitOf(file);
+          if (unit && kind.filesOf(unit).every((f) => files.has(f))) units.add(unit);
+        }
+        // Keep what a peer added after the listing began; the listing only
+        // supersedes what this round started with.
+        for (const unit of latest.ttsPacks?.[dest.id] ?? []) {
+          if (!recorded?.[dest.id]?.includes(unit)) units.add(unit);
+        }
+        next[dest.id] = [...units];
+      }
+      if (JSON.stringify(next) !== JSON.stringify(latest.ttsPacks ?? {})) {
+        // No updatedAt bump: recording audio must not move reading progress.
+        // Saved at once, so a quit before the next page turn keeps it.
+        books.setConfig(bookHash, { ttsPacks: next });
+        const book = useLibraryStore.getState().getBookByHash(bookHash);
+        const config = books.getConfig(bookHash);
+        if (book && config) {
+          const settings = useSettingsStore.getState().settings;
+          await this.#appService.saveBookConfig(book, config, settings);
+          pendingPackPublications.add(bookHash);
+        }
+      }
     };
     const previous = syncRounds.get(bookHash) ?? Promise.resolve();
-    const next = previous.then(round).catch((err) => {
-      console.warn('TTS pack sync failed', err);
-    });
+    const next = previous
+      .then(round)
+      .then(async () => {
+        if (!pendingPackPublications.has(bookHash)) return;
+        const [
+          { useBookDataStore },
+          { useLibraryStore },
+          { SyncClient },
+          { isSyncCategoryEnabled },
+          { getUserID },
+        ] = await Promise.all([
+          import('@/store/bookDataStore'),
+          import('@/store/libraryStore'),
+          import('@/libs/sync'),
+          import('@/services/sync/syncCategories'),
+          import('@/utils/access'),
+        ]);
+        const book = useLibraryStore.getState().getBookByHash(bookHash);
+        const config = useBookDataStore.getState().getConfig(bookHash);
+        // Retry saved records even when Book Data has no destinations now.
+        // Publish only the pack record, at the oldest timestamp: the server
+        // unions it into its row without replacing reading progress. The
+        // reader publishes its position separately, with a fresh XPointer.
+        if (book && config && isSyncCategoryEnabled('progress') && (await getUserID())) {
+          await new SyncClient().pushChanges({
+            configs: [
+              { bookHash, metaHash: book.metaHash, ttsPacks: config.ttsPacks, updatedAt: 0 },
+            ],
+          });
+          pendingPackPublications.delete(bookHash);
+        }
+      })
+      .catch((err) => {
+        console.warn('TTS pack sync failed', err);
+      });
     syncRounds.set(bookHash, next);
     void next.then(() => {
       if (syncRounds.get(bookHash) === next) syncRounds.delete(bookHash);
