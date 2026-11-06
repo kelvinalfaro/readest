@@ -13,6 +13,7 @@ import { Insets } from '@/types/misc';
 import { EnvConfigType } from '@/services/environment';
 import { FoliateView } from '@/types/view';
 import { isAbsEbook } from '@/utils/audiobook';
+import { partialMD5 } from '@/utils/md5';
 import { DocumentLoader, TOCItem } from '@/libs/document';
 import {
   isPseStreamFileName,
@@ -279,6 +280,20 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
           if (doc.format === 'CBZ') config.widePages = getWidePages(bookDoc.sections);
         }
       }
+      // KOReader keys a book by its file's partial MD5, but an Audiobookshelf
+      // ebook's hash comes from its abs:// path: keep the file's own id with
+      // the book for KOReader Sync (#7088). Hashed on every open, since the
+      // server can replace an item's file, and waited for only briefly: a
+      // stalled range read must not keep the book from opening.
+      if (file && isAbsEbook(book)) {
+        const hashing = partialMD5(file).then(
+          (hash) => {
+            book.metadata!.absFileHash = hash;
+          },
+          (err) => console.warn('Failed to hash the Audiobookshelf ebook', err),
+        );
+        await Promise.race([hashing, new Promise((resolve) => setTimeout(resolve, 5000))]);
+      }
       const config = await configPromise;
       // Import annotations from third-party readers on first open. The
       // module import was already kicked off above; providers still run
@@ -437,7 +452,12 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
             config: {
               ...bookData.config,
               updatedAt: Date.now(),
-              viewSettings,
+              // The sidebar tab is written to the book config only, so keep
+              // it rather than the live copy's stale value (#6836).
+              viewSettings: {
+                ...viewSettings,
+                sideBarTab: bookData.config?.viewSettings?.sideBarTab ?? viewSettings.sideBarTab,
+              },
             },
           },
         },

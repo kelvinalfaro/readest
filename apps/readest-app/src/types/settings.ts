@@ -108,6 +108,12 @@ export interface KOSyncSettings {
    * Off by default, matching KOReader.
    */
   sendMetadata?: boolean;
+  /**
+   * Accept a self-signed or mismatched TLS certificate from this server on
+   * native requests. Unset on settings saved before the option existed, which
+   * keep accepting them; see `allowsSelfSignedCert`.
+   */
+  allowSelfSignedCert?: boolean;
 }
 
 export type CWAFormatPreference = 'epub' | 'kepub' | 'pdf';
@@ -168,6 +174,12 @@ export interface BookOrbitSettings {
    * option existed keep the automatic pushes they already had.
    */
   autoSync?: boolean;
+  /**
+   * Accept a self-signed or mismatched TLS certificate from this server on
+   * native requests. Unset on settings saved before the option existed, which
+   * keep accepting them; see `allowsSelfSignedCert`.
+   */
+  allowSelfSignedCert?: boolean;
 }
 
 export interface ReadwiseSettings {
@@ -225,6 +237,10 @@ export interface NotionSettings {
   lastSyncedAt: number;
   /** Append a chapter heading block before each highlight (default ON). */
   includeChapterHeading?: boolean;
+  /** Render each note through `customTemplate` instead of the built-in layout. */
+  useCustomTemplate?: boolean;
+  /** Nunjucks template rendering one note as Markdown, converted to Notion blocks. */
+  customTemplate?: string;
 }
 
 /**
@@ -394,7 +410,8 @@ export interface ReadestCloudSettings {
  * User-facing sync categories. 'progress' gates the existing book-config
  * (reading progress) sync, 'note' gates annotations, 'book' gates book
  * binaries + metadata, 'dictionary' gates the imported-dictionary replica
- * sync. 'credentials' is a meta-toggle that gates the encrypted-credential
+ * sync. 'book_data' gates a book's synced data files (downloaded read-aloud
+ * audio, later translations). 'credentials' is a meta-toggle that gates the encrypted-credential
  * fields (OPDS username/password, KOSync credentials, Readwise / Hardcover
  * tokens) across whichever replica kinds carry them. Adding a new replica
  * kind extends this union.
@@ -403,6 +420,7 @@ export type SyncCategory =
   | 'book'
   | 'progress'
   | 'note'
+  | 'book_data'
   | 'dictionary'
   | 'font'
   | 'texture'
@@ -418,6 +436,7 @@ export const SYNC_CATEGORIES: readonly SyncCategory[] = [
   'book',
   'progress',
   'note',
+  'book_data',
   'dictionary',
   'font',
   'texture',

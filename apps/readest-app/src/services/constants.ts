@@ -74,6 +74,12 @@ export const SUPPORTED_BOOK_EXTS = [
   'htm',
   'mhtml',
   'mht',
+  'rbooks',
+  // docx/rtf are never parsed natively: importBook converts them to EPUB and
+  // imports the result. Listed here so every picker / drag-drop / folder-walk
+  // entry point lets them through to that conversion.
+  'docx',
+  'rtf',
 ];
 export const BOOK_ACCEPT_FORMATS = SUPPORTED_BOOK_EXTS.map((ext) => `.${ext}`).join(', ');
 export const BOOK_UNGROUPED_NAME = '';
@@ -398,6 +404,7 @@ export const DEFAULT_BOOK_LAYOUT: BookLayout = {
   disableDoubleClick: false,
   volumeKeysToFlip: false,
   maxColumnCount: 2,
+  duoBookMode: true,
   maxInlineSize: getDefaultMaxInlineSize(),
   maxBlockSize: getDefaultMaxBlockSize(),
   writingMode: 'auto',
@@ -505,6 +512,7 @@ export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   showBatteryPercentage: true,
   use24HourClock: false,
   showPaginationButtons: false,
+  stablePageNumbers: true,
   progressStyle: 'fraction',
   referencePageCount: 0,
 
